@@ -39,6 +39,57 @@ public sealed class YouTubeAdapter(
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var yielded = 0;
 
+        // Shorts complaint-mining: expensive search calls run once a day (window gate).
+        var hour = timeProvider.GetUtcNow().Hour;
+        if (config.MiningQueries.Count > 0
+            && hour >= config.MiningWindowUtcHour && hour < config.MiningWindowUtcHour + 3)
+        {
+            foreach (var query in config.MiningQueries)
+            {
+                if (yielded >= options.MaxItems)
+                {
+                    yield break;
+                }
+
+                await Task.Delay(config.PolitenessDelayMs, cancellationToken);
+                var found = await SearchShortsAsync(query, config, cancellationToken);
+                foreach (var item in found)
+                {
+                    if (yielded >= options.MaxItems)
+                    {
+                        yield break;
+                    }
+
+                    if (item.Id?.VideoId is not { Length: > 0 } videoId
+                        || item.Snippet?.Title is not { Length: > 0 } shortTitle
+                        || !seen.Add(videoId))
+                    {
+                        continue;
+                    }
+
+                    await Task.Delay(config.PolitenessDelayMs, cancellationToken);
+                    var shortComments = await FetchCommentsAsync(videoId, config, cancellationToken);
+
+                    yielded++;
+                    yield return new RawItem
+                    {
+                        Source = SourceKind.YouTube,
+                        ExternalId = videoId,
+                        Title = shortTitle.Trim(),
+                        Body = Truncate(HtmlText.ToPlainText(item.Snippet.Description), 1500),
+                        Url = $"https://www.youtube.com/shorts/{videoId}",
+                        Author = item.Snippet.ChannelTitle,
+                        Community = $"shorts:{Slug(query)}",
+                        Score = shortComments.Count, // search omits stats; comment density proxies traction
+                        CommentCount = shortComments.Count,
+                        CreatedAt = item.Snippet.PublishedAt ?? timeProvider.GetUtcNow(),
+                        FetchedAt = timeProvider.GetUtcNow(),
+                        Comments = shortComments,
+                    };
+                }
+            }
+        }
+
         foreach (var region in config.Regions)
         {
             if (yielded >= options.MaxItems)
@@ -91,6 +142,35 @@ public sealed class YouTubeAdapter(
                 };
             }
         }
+    }
+
+    private async Task<IReadOnlyList<YouTubeSearchItem>> SearchShortsAsync(
+        string query, YouTubeOptions config, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var publishedAfter = Uri.EscapeDataString(
+                timeProvider.GetUtcNow().AddDays(-config.MiningPublishedDays)
+                    .UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture));
+            var url = "search?part=snippet&type=video&videoDuration=short&order=viewCount" +
+                $"&publishedAfter={publishedAfter}&maxResults={config.MiningPerQuery}" +
+                $"&q={Uri.EscapeDataString(query)}&key={config.ApiKey}";
+            var response = await httpClient.GetFromJsonAsync<YouTubeSearchResponse>(
+                new Uri(url, UriKind.Relative), JsonOptions, cancellationToken);
+            return response?.Items ?? [];
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
+        {
+            logger.LogWarning(ex, "YouTube shorts search failed for '{Query}'", query);
+            return [];
+        }
+    }
+
+    private static string Slug(string query)
+    {
+        var clean = new string([.. query.ToLowerInvariant().Where(c => char.IsAsciiLetterOrDigit(c) || c == ' ')])
+            .Trim().Replace(' ', '-');
+        return clean.Length > 24 ? clean[..24] : clean;
     }
 
     private async Task<IReadOnlyList<YouTubeVideo>> FetchTrendingAsync(

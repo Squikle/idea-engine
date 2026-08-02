@@ -5,6 +5,19 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.26.0 — 2026-08-02
+
+- GDELT source LIVE (free, no key): the global news firehose filtered to
+  high-pain negative-tone themes (safety, scams, outages, daily pains) - bad
+  news becomes opportunity fuel for the "does a local Citizen-style fix
+  exist?" arbitrage question; strict 6.5s pacing (their limiter penalty-boxes
+  violators), graceful 429 label-skip; /collect gdelt
+- YouTube Shorts complaint-mining: complaint-shaped searches ("why is there
+  no app for", "i wish there was an app"…) over recent Shorts + their top
+  comments, once daily inside a UTC window (~450 of 10 000 quota units).
+  Honest limit: caption downloads need the video owner's OAuth - titles,
+  descriptions and comments carry the complaints anyway
+
 ## 0.25.1 — 2026-08-02
 
 - 🗒 marker on /ideas lines when an idea carries your notes (re-research reminder)

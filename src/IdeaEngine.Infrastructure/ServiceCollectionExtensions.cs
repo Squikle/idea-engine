@@ -11,6 +11,7 @@ using IdeaEngine.Infrastructure.Sources.FourChan;
 using IdeaEngine.Infrastructure.Sources.HackerNews;
 using IdeaEngine.Infrastructure.Sources.Lemmy;
 using IdeaEngine.Infrastructure.Sources.RedditRss;
+using IdeaEngine.Infrastructure.Sources.Gdelt;
 using IdeaEngine.Infrastructure.Sources.YouTube;
 using IdeaEngine.Infrastructure.Triage;
 using Microsoft.EntityFrameworkCore;
@@ -251,6 +252,25 @@ public static class ServiceCollectionExtensions
             })
             .AddStandardResilienceHandler();
         services.AddTransient<ISourceAdapter>(sp => sp.GetRequiredService<YouTubeAdapter>());
+
+        services.Configure<GdeltOptions>(configuration.GetSection("IdeaEngine:Sources:Gdelt"));
+        services
+            .AddHttpClient<GdeltAdapter>(client =>
+            {
+                client.BaseAddress = new Uri("https://api.gdeltproject.org/api/v2/doc/");
+                client.Timeout = TimeSpan.FromSeconds(40);
+                client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", userAgent);
+            })
+            // GDELT routinely needs 10-25s per query; default 10s attempt timeout starved it.
+            .AddStandardResilienceHandler(o =>
+            {
+                // No retries: a GDELT 429 means penalty box; repeats extend the sentence.
+                o.Retry.MaxRetryAttempts = 0;
+                o.AttemptTimeout.Timeout = TimeSpan.FromSeconds(30);
+                o.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(35);
+                o.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(70);
+            });
+        services.AddTransient<ISourceAdapter>(sp => sp.GetRequiredService<GdeltAdapter>());
     }
 
     private static string BuildUserAgent(IConfiguration configuration)

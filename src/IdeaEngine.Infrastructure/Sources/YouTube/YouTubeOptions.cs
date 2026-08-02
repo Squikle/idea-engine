@@ -19,4 +19,23 @@ public sealed class YouTubeOptions
 
     /// <summary>Delay between API calls.</summary>
     public int PolitenessDelayMs { get; set; } = 250;
+
+    /// <summary>Complaint-shaped Shorts searches (100 quota units each - the expensive call).</summary>
+    public IList<string> MiningQueries { get; } =
+    [
+        "why is there no app for",
+        "i wish there was an app",
+        "so annoying that",
+        "someone should invent",
+    ];
+
+    /// <summary>Shorts taken per mining query.</summary>
+    public int MiningPerQuery { get; set; } = 4;
+
+    /// <summary>Only Shorts published within this window.</summary>
+    public int MiningPublishedDays { get; set; } = 7;
+
+    /// <summary>Mining runs only in the cycle landing inside [hour, hour+3) UTC — once a day,
+    /// keeping search-quota burn at ~450/10000 units instead of 8x that.</summary>
+    public int MiningWindowUtcHour { get; set; } = 12;
 }

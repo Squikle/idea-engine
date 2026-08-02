@@ -20,6 +20,16 @@ internal sealed record YouTubeStatistics(
     [property: JsonPropertyName("viewCount")] string? ViewCount,
     [property: JsonPropertyName("commentCount")] string? CommentCount);
 
+internal sealed record YouTubeSearchResponse(
+    [property: JsonPropertyName("items")] IReadOnlyList<YouTubeSearchItem>? Items);
+
+internal sealed record YouTubeSearchItem(
+    [property: JsonPropertyName("id")] YouTubeSearchId? Id,
+    [property: JsonPropertyName("snippet")] YouTubeSnippet? Snippet);
+
+internal sealed record YouTubeSearchId(
+    [property: JsonPropertyName("videoId")] string? VideoId);
+
 internal sealed record YouTubeCommentThreadsResponse(
     [property: JsonPropertyName("items")] IReadOnlyList<YouTubeCommentThread>? Items);
 
