@@ -182,7 +182,15 @@ internal sealed class JobRunnerHostedService(
         await SaveProgressIdAsync(job.Id, progress.MessageId, cancellationToken);
 
         var ideaId = payload.IdeaId;
-        var advancedDrop = true; // resumed-from-checkpoint drops were advanced by definition
+        var advancedDrop = true;
+        if (ideaId is { } resumedId)
+        {
+            // Resumed checkpoint: the payload predates the verdict - ask the DB.
+            using var resumeScope = scopeFactory.CreateScope();
+            var resumeDb = resumeScope.ServiceProvider
+                .GetRequiredService<IdeaEngine.Infrastructure.Persistence.IdeaEngineDbContext>();
+            advancedDrop = (await resumeDb.Ideas.FindAsync([resumedId], cancellationToken))?.Status != "dismissed";
+        }
 
         if (ideaId is null)
         {

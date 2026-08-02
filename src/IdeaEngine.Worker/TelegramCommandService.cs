@@ -110,6 +110,8 @@ internal sealed class TelegramCommandService(
                 new BotCommand { Command = "sweep", Description = "re-eval verdicts made by an older brain" },
                 new BotCommand { Command = "verify", Description = "mark idea as reviewed by you" },
                 new BotCommand { Command = "note", Description = "argue: attach a note the next research must address" },
+                new BotCommand { Command = "notes", Description = "your notes: all ideas or one" },
+                new BotCommand { Command = "find", Description = "fuzzy-search ideas by words/context" },
                 new BotCommand { Command = "appeal", Description = "stronger model reviews a verdict" },
                 new BotCommand { Command = "bump", Description = "+$5 to today's AI caps" },
                 new BotCommand { Command = "kill", Description = "your verdict: dismiss an idea" },
@@ -179,6 +181,8 @@ internal sealed class TelegramCommandService(
                 "kill" => await SetIdeaStatusAsync(argument, "dismissed", cancellationToken),
                 "verify" => await VerifyIdeaAsync(argument, cancellationToken),
                 "note" => await AddNoteAsync(argument, cancellationToken),
+                "notes" => await ListNotesAsync(argument, cancellationToken),
+                "find" => await FindIdeasAsync(argument, cancellationToken),
                 "appeal" => StartAppeal(argument),
                 "bump" => await BumpBudgetAsync(cancellationToken),
                 "promote" => await SetIdeaStatusAsync(argument, "hot", cancellationToken),
@@ -1115,6 +1119,7 @@ internal sealed class TelegramCommandService(
 
             builder.Append(IdeaEngine.Core.Common.Ui.IdeaStatus(entry.Idea.Status)).Append(tier)
                 .Append(" <code>").Append(id).Append(pct).Append("</code> ")
+                .Append(entry.Idea.NotesJson is { Length: > 2 } ? "🗒 " : string.Empty)
                 .Append(System.Net.WebUtility.HtmlEncode(entry.Idea.Title));
             if (entry.Idea.Origin == "operator")
             {
@@ -1360,6 +1365,145 @@ internal sealed class TelegramCommandService(
 
         return string.Empty;
     }
+
+    private async Task<string> ListNotesAsync(string? argument, CancellationToken cancellationToken)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
+
+        if (long.TryParse(argument, out var ideaId))
+        {
+            var idea = await db.Ideas.FindAsync([ideaId], cancellationToken);
+            if (idea is null)
+            {
+                return $"No idea #{ideaId}.";
+            }
+
+            var notes = IdeaJson.SafeDeserialize<List<Dictionary<string, string>>>(idea.NotesJson) ?? [];
+            if (notes.Count == 0)
+            {
+                return $"#{ideaId} has no notes yet — /note {ideaId} your argument";
+            }
+
+            var one = new StringBuilder();
+            one.Append("🗒 <b>Notes on #").Append(ideaId).Append(" · ")
+                .Append(System.Net.WebUtility.HtmlEncode(IdeaEngine.Core.Common.TextClip.Clip(idea.Title, 55)))
+                .Append("</b>\n");
+            foreach (var note in notes.TakeLast(10))
+            {
+                var when = note.TryGetValue("at", out var at)
+                    && DateTimeOffset.TryParse(at, out var parsed)
+                    ? TimeZoneInfo.ConvertTime(parsed, timeZone).ToString("dd MMM HH:mm", CultureInfo.InvariantCulture)
+                    : "?";
+                one.Append("• <i>").Append(when).Append("</i> — ")
+                    .Append(System.Net.WebUtility.HtmlEncode(note.GetValueOrDefault("text") ?? string.Empty))
+                    .Append('\n');
+            }
+
+            one.Append("\n<i>/research ").Append(ideaId).Append(" makes the judge address these</i>");
+            return one.ToString();
+        }
+
+        var withNotes = await db.Ideas
+            .Where(i => i.NotesJson != null && i.Category != "meta")
+            .OrderByDescending(i => i.Id)
+            .Take(30)
+            .ToListAsync(cancellationToken);
+        if (withNotes.Count == 0)
+        {
+            return "No notes anywhere yet — /note 5 your argument attaches one.";
+        }
+
+        var builder = new StringBuilder("🗒 <b>Ideas with your notes</b>\n\n");
+        foreach (var idea in withNotes)
+        {
+            var notes = IdeaJson.SafeDeserialize<List<Dictionary<string, string>>>(idea.NotesJson) ?? [];
+            if (notes.Count == 0)
+            {
+                continue;
+            }
+
+            builder.Append("<b>#").Append(idea.Id).Append("</b> (").Append(notes.Count).Append("🗒) ")
+                .Append(System.Net.WebUtility.HtmlEncode(IdeaEngine.Core.Common.TextClip.Clip(idea.Title, 45)))
+                .Append("\n   <i>")
+                .Append(System.Net.WebUtility.HtmlEncode(
+                    IdeaEngine.Core.Common.TextClip.Clip(notes[^1].GetValueOrDefault("text") ?? string.Empty, 80)))
+                .Append("</i>\n");
+        }
+
+        builder.Append("\n/notes 12 for full history · re-research to make them count");
+        return builder.ToString();
+    }
+
+    private async Task<string> FindIdeasAsync(string? argument, CancellationToken cancellationToken)
+    {
+        var query = argument?.Trim();
+        if (query is null || query.Length < 2)
+        {
+            return "Usage: /find lego sorting — fuzzy search over titles and theses (typos fine)";
+        }
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
+
+        // Stage 1: trigram similarity + substring, $0, typo-tolerant.
+        var pattern = $"%{query}%";
+        var hits = await db.Ideas
+            .FromSqlInterpolated($@"
+                SELECT * FROM ideas
+                WHERE category <> 'meta' AND (
+                    title ILIKE {pattern} OR thesis ILIKE {pattern}
+                    OR similarity(title, {query}) > 0.18
+                    OR similarity(coalesce(thesis, ''), {query}) > 0.12)
+                ORDER BY GREATEST(similarity(title, {query}), similarity(coalesce(thesis, ''), {query})) DESC
+                LIMIT 8")
+            .ToListAsync(cancellationToken);
+
+        // Stage 2: nano semantic fallback when the cheap pass finds nothing.
+        if (hits.Count == 0)
+        {
+            var recent = await db.Ideas
+                .Where(i => i.Category != "meta")
+                .OrderByDescending(i => i.Id)
+                .Take(60)
+                .Select(i => new { i.Id, i.Title })
+                .ToListAsync(cancellationToken);
+            var chat = scope.ServiceProvider.GetRequiredService<IdeaEngine.Infrastructure.Ai.OpenRouterChatClient>();
+            var nano = scope.ServiceProvider
+                .GetRequiredService<IOptions<IdeaEngine.Infrastructure.Ai.GlanceOptions>>().Value;
+            var completion = await chat.CompleteAsync(
+                nano.Model,
+                "Match the query to idea titles semantically. Reply ONLY {\"ids\":[..]} with up to 5 matching ids, best first. Empty list when nothing fits.",
+                $"query: {query}\n" + string.Join('\n', recent.Select(r => $"{r.Id}: {r.Title}")),
+                400, "low", cancellationToken);
+            var ids = IdeaEngine.Infrastructure.Ai.LlmJson
+                .TryParse<FindIdsDto>(completion?.Content)?.Ids ?? [];
+            if (ids.Count > 0)
+            {
+                hits = await db.Ideas.Where(i => ids.Contains(i.Id)).ToListAsync(cancellationToken);
+                hits = [.. hits.OrderBy(h => ids.IndexOf(h.Id))];
+            }
+        }
+
+        if (hits.Count == 0)
+        {
+            return $"🔍 Nothing matching “{System.Net.WebUtility.HtmlEncode(query)}” — /ideas all to browse.";
+        }
+
+        var builder = new StringBuilder("🔍 <b>Found</b>\n\n");
+        foreach (var idea in hits)
+        {
+            builder.Append(IdeaEngine.Core.Common.Ui.IdeaStatus(idea.Status))
+                .Append(" <b>#").Append(idea.Id).Append("</b> ")
+                .Append(System.Net.WebUtility.HtmlEncode(idea.Title)).Append('\n');
+        }
+
+        builder.Append("\n/idea N for the trace card");
+        return builder.ToString();
+    }
+
+    private sealed record FindIdsDto(
+        [property: System.Text.Json.Serialization.JsonPropertyName("ids")] List<long>? Ids);
 
     private async Task<string> AddNoteAsync(string? argument, CancellationToken cancellationToken)
     {
@@ -1875,7 +2019,9 @@ internal sealed class TelegramCommandService(
         /queue — jobs: running/held/failed + cancel ✖️, resume ▶️, retry-all 🔁 buttons
         /cancel 7 — cancel a queued/held job (running ones finish)
         /verify 5 — mark reviewed (default /ideas hides verified) · /bump — +$5 today
-        /note 5 your argument — next research must address it · /appeal 5 — opus reviews the verdict
+        /note 5 your argument — next research must address it · /notes [5] — see your notes
+        /find lego sorting — fuzzy idea search (🗒 in lists = has your notes)
+        /appeal 5 — opus reviews the verdict
         /advise — AI reviews the pipeline itself
 
         <b>View</b>

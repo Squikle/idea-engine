@@ -55,6 +55,9 @@ public static class ResearchPrompts
         - Garage-scale lens: launchable by 1-3 people from an apartment.
         - Right-goal judging: "reputation" category = virality/stars potential, "content" =
           audience growth - not revenue. Absurd/status plays live on shareability.
+        - UPSTREAM OPTION: for any idea, consider the shovel-seller variant - exposing the
+          data/capability as an API or MCP endpoint for AI agents and app builders instead of
+          (or before) the consumer product; note it in related_variants when it strengthens the play.
         - ARBITRAGE SCORING: when incumbents exist but ignore the idea's target platform,
           country/language, audience, or companion-feature dimension, competition_gap stays
           HIGH and say so in differentiation_path. Check the evidence for whether competitors

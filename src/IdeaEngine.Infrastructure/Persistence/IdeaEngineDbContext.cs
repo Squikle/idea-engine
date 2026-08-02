@@ -25,6 +25,7 @@ public sealed class IdeaEngineDbContext(DbContextOptions<IdeaEngineDbContext> op
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasPostgresExtension("vector");
+        modelBuilder.HasPostgresExtension("pg_trgm");
 
         modelBuilder.Entity<RawItemEntity>(item =>
         {

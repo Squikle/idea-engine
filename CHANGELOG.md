@@ -5,6 +5,20 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.25.1 — 2026-08-02
+
+- 🗒 marker on /ideas lines when an idea carries your notes (re-research reminder)
+- /notes — all ideas with notes (count + latest clip); /notes 12 — full history
+  with timestamps
+- /find lego sorting — fuzzy idea search: pg_trgm similarity (typo-tolerant,
+  instant, $0) + nano semantic fallback when the cheap pass finds nothing
+- New playbook: apifirst 🔌 - sell shovels in a gold rush, stay upstream/man-in-
+  the-middle (Airbnb owns no apartments, Uber no cars); package data/tools as
+  API/MCP for AI agents and vibe-coders; expensive incumbent APIs are demand
+  proof. Judge now weighs an upstream variant for every idea (+ ReasoningMilestone)
+- Resumed drop jobs check the verdict from the DB - a skeptic-killed drop can't
+  sneak into research through the restart path either
+
 ## 0.25.0 — 2026-08-02
 
 - WATCHDOG: every job now has a hard runtime box (research 12m · drop 18m ·
