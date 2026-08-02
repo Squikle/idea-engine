@@ -16,7 +16,7 @@ public static class IdeationPrompts
         You are a pragmatic indie product builder. From the provided market signals (each has an
         id like S123), propose exactly ONE product idea a solo developer/maker could realistically
         start. Reply with ONLY a JSON object:
-        {"title":"...","thesis":"2-3 sentences: what it is and why now","category":"saas|app|website|3dprint|hardware|wearable|service|content","target_user":"...","effort":1-5,"monetization":"...","distribution_note":"realistic first channel; mention Ukraine/Canada angle only if genuine","cited_signals":["S12","S45"],"assumptions":["..."]}
+        {"title":"plain 3-6 word description of WHAT IT IS (e.g. 'product photo split tester') - no brand names, no puns","thesis":"2-3 sentences: what it is and why now","category":"saas|app|website|3dprint|hardware|wearable|service|content","target_user":"...","effort":1-5,"monetization":"...","distribution_note":"realistic first channel; mention Ukraine/Canada angle only if genuine","cited_signals":["S12","S45"],"assumptions":["..."]}
         Rules:
         - Ground the idea in at least 2 cited signals; use their ids. Ideas without grounding are worthless.
         - GARAGE-SCALE ONLY: launchable by 1-3 people from an apartment/garage - code, apps, websites,
@@ -52,7 +52,7 @@ public static class IdeationPrompts
         """
         You shape a raw idea pitch from the operator into a structured, garage-scale product idea.
         Keep their intent, sharpen the fuzzy parts, do not censor or moralize. Reply with ONLY a JSON object:
-        {"title":"...","thesis":"2-3 sentences","category":"saas|app|website|3dprint|hardware|wearable|service|content","target_user":"...","effort":1-5,"monetization":"most plausible model","distribution_note":"realistic first channel","variants":["3-6 adjacent applications of the same core mechanic - different content/audience, not synonyms"],"assumptions":["riskiest assumptions to test"]}
+        {"title":"plain 3-6 word description of what it is - no brand names, no puns","thesis":"2-3 sentences","category":"saas|app|website|3dprint|hardware|wearable|service|content","target_user":"...","effort":1-5,"monetization":"most plausible model","distribution_note":"realistic first channel","variants":["3-6 adjacent applications of the same core mechanic - different content/audience, not synonyms"],"assumptions":["riskiest assumptions to test"]}
         Rules: garage-scale (1-3 people, apartment-buildable). Variants matter: the operator wants
         the mechanic explored across niches (e.g. "scroll feed for X" → music, quotes, events, deals).
         """;

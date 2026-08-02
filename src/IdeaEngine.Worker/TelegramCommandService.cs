@@ -232,8 +232,8 @@ internal sealed class TelegramCommandService(
             .Append(Get(byStatus, IdeaEngine.Core.Pipeline.ItemStatus.Failed)).Append(" failed)</i>\n");
         builder.Append("signals: ").Append(signalsTotal).Append(" total · +")
             .Append(signals24h).Append(" in 24h\n");
-        builder.Append("ideas: 🟡 ").Append(ideaCounts.GetValueOrDefault("candidate"))
-            .Append(" (").Append(unresearched).Append(" await research) · 🟨 ")
+        builder.Append("ideas: 🌱 ").Append(ideaCounts.GetValueOrDefault("candidate"))
+            .Append(" (").Append(unresearched).Append(" await research) · 🤔 ")
             .Append(ideaCounts.GetValueOrDefault("uncertain") + ideaCounts.GetValueOrDefault("validated")).Append(" · 🔥 ")
             .Append(ideaCounts.GetValueOrDefault("hot")).Append(" · ☠️ ")
             .Append(ideaCounts.GetValueOrDefault("dismissed")).Append('\n');
@@ -520,11 +520,7 @@ internal sealed class TelegramCommandService(
             return "Usage: /drop followed by your idea pitch — a sentence or a paragraph, more context is better.";
         }
 
-        if (!OperationGates.Ideation.Wait(0))
-        {
-            return "Ideation is busy — try again in a minute.";
-        }
-
+        var queuedBehind = !OperationGates.Ideation.Wait(0);
         var pitch = argument.Trim();
         _ = Task.Run(
             async () =>
@@ -532,7 +528,14 @@ internal sealed class TelegramCommandService(
                 try
                 {
                     var progress = await progressNotifier.StartAsync(
-                        "📦 Drop · received, shaping your pitch…", CancellationToken.None);
+                        queuedBehind
+                            ? "📦 Drop · queued behind the current ideation run…"
+                            : "📦 Drop · received, shaping your pitch…", CancellationToken.None);
+                    if (queuedBehind)
+                    {
+                        await OperationGates.Ideation.WaitAsync(CancellationToken.None);
+                        await progress.UpdateAsync("slot free — shaping your pitch…", CancellationToken.None);
+                    }
 
                     long? ideaId;
                     using (var scope = scopeFactory.CreateScope())
@@ -741,39 +744,58 @@ internal sealed class TelegramCommandService(
                 g => g.Key,
                 g => IdeaJson.SafeDeserialize<IdeaEngine.Infrastructure.Research.ResearchReportDto>(g.First().ReportJson));
 
-        var rated = ideas
+        var scored = ideas
             .Select(i => new
             {
                 Idea = i,
                 Score = IdeaJson.ComputeScore(i, latestReports.GetValueOrDefault(i.Id)),
             })
-            .OrderByDescending(x => x.Idea.Status is "hot" or "uncertain" or "validated" or "candidate")
-            .ThenByDescending(x => x.Idea.Status == "hot")
-            .ThenByDescending(x => x.Score.Total)
-            .ThenByDescending(x => x.Idea.Id)
-            .Take(12);
+            .ToList();
 
-        var builder = new StringBuilder("<b>💡 Ideas</b>\n<i>🔥 hot · 🟨 uncertain · 🟡 new · ☠️ dead — ⭐ researched · ≈ estimate</i>\n\n");
-        foreach (var entry in rated)
+        var builder = new StringBuilder("<b>💡 Ideas</b> <i>(⭐ researched · ≈ estimate)</i>\n");
+
+        void Section(string header, Func<string, bool> match, int limit)
         {
-            // Monospace column keeps ids and scores aligned regardless of emoji widths.
-            var id = ('#' + entry.Idea.Id.ToString(CultureInfo.InvariantCulture)).PadRight(4);
-            var score = ((entry.Score.Total * 100).ToString("F0", CultureInfo.InvariantCulture) + "%")
-                .PadLeft(4) + (entry.Score.Source == "research" ? "⭐" : "≈");
-            var title = entry.Idea.Title.Length > 58
-                ? entry.Idea.Title[..57] + "…"
-                : entry.Idea.Title;
-
-            builder.Append(IdeaEngine.Core.Common.Ui.IdeaStatus(entry.Idea.Status))
-                .Append(" <code>").Append(id).Append(score).Append("</code> ")
-                .Append(System.Net.WebUtility.HtmlEncode(title));
-            if (entry.Idea.Origin == "operator")
+            var group = scored
+                .Where(x => match(x.Idea.Status))
+                .OrderByDescending(x => x.Score.Total)
+                .ThenByDescending(x => x.Idea.Id)
+                .ToList();
+            if (group.Count == 0)
             {
-                builder.Append(" — <i>yours</i>");
+                return;
             }
 
-            builder.Append('\n');
+            builder.Append('\n').Append(header).Append('\n');
+            foreach (var entry in group.Take(limit))
+            {
+                var id = ('#' + entry.Idea.Id.ToString(CultureInfo.InvariantCulture)).PadRight(4);
+                var pct = ((entry.Score.Total * 100).ToString("F0", CultureInfo.InvariantCulture) + "%")
+                    .PadLeft(4) + (entry.Score.Source == "research" ? "⭐" : "≈");
+                var title = entry.Idea.Title.Length > 58
+                    ? entry.Idea.Title[..57] + "…"
+                    : entry.Idea.Title;
+
+                builder.Append("<code>").Append(id).Append(pct).Append("</code> ")
+                    .Append(System.Net.WebUtility.HtmlEncode(title));
+                if (entry.Idea.Origin == "operator")
+                {
+                    builder.Append(" — <i>yours</i>");
+                }
+
+                builder.Append('\n');
+            }
+
+            if (group.Count > limit)
+            {
+                builder.Append("<i>… +").Append(group.Count - limit).Append(" more</i>\n");
+            }
         }
+
+        Section("🔥 <b>Hot</b>", st => st == "hot", 6);
+        Section("🤔 <b>Uncertain — your call</b>", st => st is "uncertain" or "validated", 6);
+        Section("🌱 <b>New — awaiting research</b>", st => st == "candidate", 6);
+        Section("☠️ <b>Killed</b>", st => st == "dismissed", 3);
 
         builder.Append("\n/idea 5 for the full trace");
         if (metaCount > 0)
@@ -1019,7 +1041,7 @@ internal sealed class TelegramCommandService(
                 && !string.Equals(skeptic.Verdict, "advance", StringComparison.OrdinalIgnoreCase);
             if (skepticKilled && lastResearch.Verdict != "no-go")
             {
-                builder.Append("⚔️ <i>Stages disagree → status 🟨 uncertain. Your call: /kill ")
+                builder.Append("⚔️ <i>Stages disagree → status 🤔 uncertain. Your call: /kill ")
                     .Append(idea.Id).Append(" · /promote ").Append(idea.Id)
                     .Append(" · rerun /research ").Append(idea.Id).Append("</i>\n");
             }

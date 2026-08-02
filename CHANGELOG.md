@@ -5,6 +5,16 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.13.3 — 2026-08-02
+
+- /ideas grouped by stage with headers (🔥 Hot / 🤔 Uncertain / 🌱 New / ☠️ Killed,
+  dead collapsed to 3) - scores sort within a group, so a killed 43% no longer
+  outranks a living 26%
+- Emoji rework: 🤔 uncertain (was 🟨), 🌱 new (was 🟡) - distinct at a glance
+- /drop now queues behind a running ideation instead of asking to retry
+- Builder prompts demand plain 3-6 word titles ("product photo split tester"),
+  brand-name puns banned
+
 ## 0.13.2 — 2026-08-02
 
 - /idea card is now a chronological 🛤 Journey: 1️⃣ Skeptic gate (labeled "AI
