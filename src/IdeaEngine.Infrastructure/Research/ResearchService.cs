@@ -87,6 +87,13 @@ public sealed class ResearchService(
             ideaContext += "Operator variants to evaluate: " + string.Join(" · ", variants.Take(6)) + "\n";
         }
 
+        var notes = SafeDeserialize<List<IdeaNote>>(idea.NotesJson);
+        if (notes is { Count: > 0 })
+        {
+            ideaContext += "Operator's notes/counter-arguments (address each explicitly):\n"
+                + string.Join('\n', notes.TakeLast(5).Select(n => "- " + n.Text)) + "\n";
+        }
+
         decimal cost = 0;
         var searchesUsed = 0;
         var pagesRead = 0;
@@ -121,6 +128,30 @@ public sealed class ResearchService(
         {
             await db.SaveChangesAsync(cancellationToken);
             return Stopped("web search returned no results (Brave quota or connectivity?)");
+        }
+
+        // Debate: advocate builds the case FOR before the judge synthesizes.
+        string? advocateJson = null;
+        if (progress is not null)
+        {
+            await progress.UpdateAsync($"Research #{idea.Id} · ⚖️ advocate building the case for…", cancellationToken);
+        }
+
+        var advocateCompletion = await chat.CompleteAsync(
+            options.Model, ResearchPrompts.AdvocateSystem,
+            ResearchPrompts.BuildSynthesisMessage(ideaContext, blocks),
+            2500, "low", cancellationToken);
+        cost += RecordLedger(advocateCompletion, options);
+        if (advocateCompletion?.Content is { Length: > 50 } advocateContent
+            && advocateContent.Contains("case_for", StringComparison.OrdinalIgnoreCase))
+        {
+            advocateJson = advocateContent;
+        }
+
+        if (advocateJson is not null)
+        {
+            ideaContext += "\nADVOCATE'S CASE (weigh honestly against the skeptic and evidence):\n"
+                + advocateJson + "\n";
         }
 
         // Synthesis rounds until closure or MaxRounds.
@@ -493,4 +524,8 @@ public sealed class ResearchService(
 
     private sealed record QueriesDto(
         [property: JsonPropertyName("queries")] IReadOnlyList<string>? Queries);
+
+    internal sealed record IdeaNote(
+        [property: JsonPropertyName("text")] string Text,
+        [property: JsonPropertyName("at")] DateTimeOffset At);
 }

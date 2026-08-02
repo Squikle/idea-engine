@@ -178,6 +178,7 @@ internal sealed class JobRunnerHostedService(
             $"✅ done: {Core.Common.Ui.Verdict(result.Verdict)} · ⭐{result.Score * 100:F0}% · evidence {result.Confidence * 100:F0}%",
             CancellationToken.None);
         await SendReportWithButtonsAsync(result, cancellationToken);
+        await MaybeAutoAppealAsync(result, cancellationToken);
     }
 
     private async Task ExecuteResearchAsync(JobEntity job, CancellationToken cancellationToken)
@@ -206,6 +207,37 @@ internal sealed class JobRunnerHostedService(
             $"✅ done · {Core.Common.Ui.Verdict(result.Verdict)} · ⭐{result.Score * 100:F0}% · evidence {result.Confidence * 100:F0}%",
             CancellationToken.None);
         await SendReportWithButtonsAsync(result, cancellationToken);
+        await MaybeAutoAppealAsync(result, cancellationToken);
+    }
+
+    private async Task MaybeAutoAppealAsync(
+        IdeaEngine.Infrastructure.Research.ResearchRunResult result, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var options = scope.ServiceProvider
+                .GetRequiredService<Microsoft.Extensions.Options.IOptions<IdeaEngine.Infrastructure.Research.AppealOptions>>().Value;
+            if (!options.Enabled || result.Verdict != "no-go" || result.Score < options.AutoAppealMinScore)
+            {
+                return;
+            }
+
+            await notifier.SendAsync(
+                $"⚖️ Auto-appeal for #{result.IdeaId}: killed despite ⭐{result.Score * 100:F0}% — second opinion running…",
+                cancellationToken);
+            var appeal = scope.ServiceProvider.GetRequiredService<IdeaEngine.Infrastructure.Research.AppealService>();
+            var appealResult = await appeal.RunAsync(result.IdeaId, cancellationToken);
+            await notifier.SendAsync(
+                appealResult.StoppedReason is { } reason
+                    ? $"⚖️ Auto-appeal #{result.IdeaId} ⛔ {reason}"
+                    : appealResult.Html,
+                cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Auto-appeal failed for idea {IdeaId}", result.IdeaId);
+        }
     }
 
     private async Task SaveProgressIdAsync(long jobId, int? messageId, CancellationToken cancellationToken)

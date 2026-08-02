@@ -58,6 +58,7 @@ public static class ServiceCollectionExtensions
         services.Configure<AiBudgetOptions>(configuration.GetSection("IdeaEngine:Ai:Budget"));
         services.Configure<GlanceOptions>(configuration.GetSection("IdeaEngine:Ai:Glance"));
         services.Configure<Research.ResearchOptions>(configuration.GetSection("IdeaEngine:Ai:Research"));
+        services.Configure<Research.AppealOptions>(configuration.GetSection("IdeaEngine:Ai:Appeal"));
 
         // LLM calls run far longer than the 10s default attempt timeout.
         services.AddHttpClient<OpenRouterTriageAnalyzer>(
@@ -96,6 +97,7 @@ public static class ServiceCollectionExtensions
                 client.MaxResponseContentBufferSize = 2_000_000;
             });
         services.AddScoped<Research.ResearchService>();
+        services.AddScoped<Research.AppealService>();
         services.AddSingleton<Research.ResearchCoordinator>();
         services.AddScoped<Reporting.DigestService>();
         services.AddScoped<Jobs.JobService>();

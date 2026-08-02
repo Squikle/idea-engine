@@ -104,6 +104,8 @@ internal sealed class TelegramCommandService(
                 new BotCommand { Command = "research", Description = "web-research a candidate idea" },
                 new BotCommand { Command = "queue", Description = "jobs: running, waiting, failed" },
                 new BotCommand { Command = "verify", Description = "mark idea as reviewed by you" },
+                new BotCommand { Command = "note", Description = "argue: attach a note the next research must address" },
+                new BotCommand { Command = "appeal", Description = "stronger model reviews a verdict" },
                 new BotCommand { Command = "bump", Description = "+$5 to today's AI caps" },
                 new BotCommand { Command = "kill", Description = "your verdict: dismiss an idea" },
                 new BotCommand { Command = "promote", Description = "your verdict: mark an idea hot" },
@@ -167,6 +169,8 @@ internal sealed class TelegramCommandService(
                 "research" => await StartResearchAsync(argument, cancellationToken),
                 "kill" => await SetIdeaStatusAsync(argument, "dismissed", cancellationToken),
                 "verify" => await VerifyIdeaAsync(argument, cancellationToken),
+                "note" => await AddNoteAsync(argument, cancellationToken),
+                "appeal" => StartAppeal(argument),
                 "bump" => await BumpBudgetAsync(cancellationToken),
                 "promote" => await SetIdeaStatusAsync(argument, "hot", cancellationToken),
                 "advise" => StartAdvise(),
@@ -1014,6 +1018,75 @@ internal sealed class TelegramCommandService(
         return string.Empty;
     }
 
+    private async Task<string> AddNoteAsync(string? argument, CancellationToken cancellationToken)
+    {
+        var parts = (argument ?? string.Empty).Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 2 || !long.TryParse(parts[0], out var ideaId))
+        {
+            return "Usage: /note 5 your argument — stored on the idea and injected into the next /research";
+        }
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
+        var idea = await db.Ideas.FindAsync([ideaId], cancellationToken);
+        if (idea is null)
+        {
+            return $"No idea #{ideaId}.";
+        }
+
+        var notes = IdeaJson.SafeDeserialize<List<Dictionary<string, object>>>(idea.NotesJson) ?? [];
+        notes.Add(new Dictionary<string, object>
+        {
+            ["text"] = parts[1].Trim(),
+            ["at"] = timeProvider.GetUtcNow(),
+        });
+        idea.NotesJson = System.Text.Json.JsonSerializer.Serialize(notes, LlmJson.Options);
+        await db.SaveChangesAsync(cancellationToken);
+
+        return $"🗒 Note added to #{ideaId} ({notes.Count} total). It will be injected into the next /research {ideaId} — the judge must address it.";
+    }
+
+    private string StartAppeal(string? argument)
+    {
+        if (!long.TryParse(argument, out var ideaId))
+        {
+            return "Usage: /appeal 5 — a stronger model reviews the verdict for fairness/depth";
+        }
+
+        _ = Task.Run(
+            async () =>
+            {
+                try
+                {
+                    var progress = await progressNotifier.StartAsync(
+                        $"⚖️ Appeal #{ideaId} · opus-class review of the verdict…", CancellationToken.None);
+                    using var scope = scopeFactory.CreateScope();
+                    var appeal = scope.ServiceProvider.GetRequiredService<IdeaEngine.Infrastructure.Research.AppealService>();
+                    var result = await appeal.RunAsync(ideaId, CancellationToken.None);
+                    if (result.StoppedReason is { } reason)
+                    {
+                        await progress.CompleteAsync($"⚖️ Appeal #{ideaId} ⛔ {reason}", CancellationToken.None);
+                        return;
+                    }
+
+                    await progress.CompleteAsync(
+                        result.NewStatus is { } status
+                            ? $"⚖️ Appeal #{ideaId} · OVERTURNED → {status}"
+                            : $"⚖️ Appeal #{ideaId} · verdict upheld",
+                        CancellationToken.None);
+                    await notifier.SendAsync(result.Html, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Appeal failed for idea {IdeaId}", ideaId);
+                    await notifier.SendAsync("⚖️ Appeal crashed — check logs.", CancellationToken.None);
+                }
+            },
+            CancellationToken.None);
+
+        return string.Empty;
+    }
+
     private async Task<string> VerifyIdeaAsync(string? argument, CancellationToken cancellationToken)
     {
         if (!long.TryParse(argument, out var ideaId))
@@ -1225,6 +1298,20 @@ internal sealed class TelegramCommandService(
         AppendLine(builder, "Monetization", idea.Monetization);
         AppendLine(builder, "Distribution", idea.DistributionNote);
 
+        var cardNotes = IdeaJson.SafeDeserialize<List<Dictionary<string, string>>>(idea.NotesJson);
+        if (cardNotes is { Count: > 0 })
+        {
+            builder.Append("\n<b>🗒 Your notes</b>\n");
+            foreach (var note in cardNotes.TakeLast(3))
+            {
+                if (note.TryGetValue("text", out var noteText))
+                {
+                    builder.Append("• ").Append(System.Net.WebUtility.HtmlEncode(
+                        IdeaEngine.Core.Common.TextClip.Clip(noteText, 120))).Append('\n');
+                }
+            }
+        }
+
         // ---- The journey: chronological stages, last one is the verdict that counts. ----
         builder.Append("\n<b>🛤 Journey</b>\n");
 
@@ -1389,6 +1476,7 @@ internal sealed class TelegramCommandService(
         /kill 5 · /promote 5 — override any verdict with YOUR decision
         /queue — jobs overview; replies to the live log of the running job
         /verify 5 — mark reviewed (default /ideas hides verified) · /bump — +$5 today
+        /note 5 your argument — next research must address it · /appeal 5 — opus reviews the verdict
         /advise — AI reviews the pipeline itself
 
         <b>View</b>

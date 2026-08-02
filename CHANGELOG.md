@@ -5,6 +5,19 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.17.0 — 2026-08-02
+
+- Debate research: an ⚖️ ADVOCATE pass now builds the strongest case FOR every
+  idea (competitor gaps + at least 2 concrete pivots) before the judge
+  synthesizes - the judge weighs advocate vs skeptic honestly and adopts pivots
+  that survive evidence (fixes the reject-by-default bias)
+- /note 5 your argument - argue with the machine: notes are stored on the idea,
+  shown on the card, and the next /research must address each explicitly
+- /appeal 5 - opus-class court of appeal reviews verdict-vs-evidence for depth
+  and fairness, can overturn status (overturned ideas return to review inbox)
+- Auto-appeal: no-go verdicts with ⭐score ≥50% trigger the second opinion
+  automatically (new "appeal" stage, $1.50/day cap)
+
 ## 0.16.0 — 2026-08-02
 
 - Research output shows BOTH numbers everywhere: ⭐N% opportunity strength +

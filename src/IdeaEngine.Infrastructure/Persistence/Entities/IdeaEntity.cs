@@ -36,6 +36,9 @@ public sealed class IdeaEntity
     /// <summary>Operator notes/counter-arguments, jsonb array of {text, at}.</summary>
     public string? NotesJson { get; set; }
 
+    /// <summary>Latest appeal verdict (assessment/overturn/justification), jsonb.</summary>
+    public string? AppealJson { get; set; }
+
     /// <summary>Playbook lens key(s) used at ideation, space-separated.</summary>
     public string? Playbook { get; set; }
 
