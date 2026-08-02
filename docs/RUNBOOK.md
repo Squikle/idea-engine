@@ -110,6 +110,19 @@ Verify db: `docker compose ps` → `idea-engine-db (healthy)`.
   affiliate account → App Console → app key/secret. `.env: ALIEXPRESS_APP_KEY/SECRET`.
   Hot-products endpoint = order-velocity demand (the dropshipping signal).
 
+### 10. Pinterest Trends (~15 min, free) - early accessory/hobby/aesthetic trends
+
+1. Convert/create a FREE business account: pinterest.com/business/create (can be a
+   fresh account, no content needed).
+2. developers.pinterest.com → My apps → Create app (name: idea-engine, purpose:
+   personal trend research, read-only).
+3. The app starts with TRIAL access - generate a token (scopes: read-only is enough).
+4. `.env: PINTEREST_ACCESS_TOKEN`. We then verify empirically whether trial access
+   covers /v5/trends; if not, request standard access from the app page (short review).
+
+Note: Best Buy dev signup rejects free/edu emails - parked unless a custom-domain
+email is available.
+
 ## Operations
 
 ### Logs
