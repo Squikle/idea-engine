@@ -36,3 +36,22 @@ flag before any productization of the digests themselves.
 - (+) Wide, legal, cheap collection; substitutes preserve the intended signals.
 - (−) No TikTok-native virality signal for now; YouTube comments are the proxy.
 - (−) Weekly deletion sync consumes a small slice of the Reddit rate budget.
+
+## Update 2026-08-01: Reddit approval gate + RSS interim
+
+Findings while onboarding:
+
+- Reddit's **Responsible Builder Policy** (June 2026) requires *explicit approval* for all
+  Data API access; self-serve app creation at `prefs/apps` is rejected with a policy
+  pointer. External readers file the developer request ticket
+  (`ticket_form_id=14868593862164`, type: developer). Unauthenticated `.json` endpoints:
+  HTTP 403 (verified empirically).
+- **Interim source:** Reddit RSS (`/r/<sub>/hot.rss`) returns HTTP 200 and remains an
+  official public syndication feed. Adapter constraints: gentle cadence (each sub every
+  2–4 h, ≥2 s between requests, descriptive UA), no scores available → **feed position
+  used as popularity proxy**. Replaced by the OAuth adapter when approval lands (same
+  `ISourceAdapter` contract).
+- Additional policy obligations adopted: **no AI training** on Reddit data (we do
+  inference-only analysis); **no inference of sensitive user characteristics** — the
+  pipeline analyzes content/topics and must never profile individual users (encode in
+  triage prompt guardrails).

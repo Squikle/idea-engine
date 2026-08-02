@@ -33,8 +33,12 @@
 
 ## Pending decisions / blockers
 
-- **Account setup by owner** (Telegram bot, OpenRouter, Reddit app, Brave) — guided in
-  RUNBOOK §Accounts. Blocks Phase 1 integration work, not Phase 1 scaffolding.
+- **Reddit Data API approval** — Reddit requires explicit approval since June 2026
+  (see ADR-0004 update). Developer request ticket to be/was submitted by owner;
+  until granted, Phase 1 uses the Reddit **RSS adapter** (feed position = score proxy).
+- **Account setup by owner** — Telegram ✅ (bot live, chat id wired), OpenRouter ✅
+  (key valid; ⚠ expires 2026-08-09, owner to remove expiry), Reddit ⏳ (approval gate),
+  Brave ⏳.
 - **Deep-validation model** — decided by bake-off in Phase 2 (see ADR-0002), not by default.
 - **EF Core vs Dapper** — decide at Phase 1 start; leaning EF Core + Npgsql + pgvector plugin
   (migrations + productivity; raw SQL escape hatch where hot).
