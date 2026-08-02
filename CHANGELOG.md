@@ -5,6 +5,17 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.20.1 — 2026-08-02
+
+- Reddit 429 handling fixed properly: subs are shuffled every cycle (under a
+  mid-list rate limit the same tail subs used to starve forever), a 429 now
+  waits 45s and retries once, and a second 429 opens a circuit - remaining
+  subs defer to the next run with ONE honest summary line instead of a wall
+  of per-sub failures. Nothing is lost: hot feeds persist for hours, order
+  reshuffles, dedup is free
+- Non-429 feed errors log the actual HTTP status; Polly timeout exceptions
+  no longer take down the whole source for the cycle
+
 ## 0.20.0 — 2026-08-02
 
 - ARCHAEOLOGY MODE: collection now mines the archives, not just fresh posts -

@@ -31,24 +31,46 @@ public sealed class RedditRssAdapter(
         var config = adapterOptions.Value;
         var yielded = 0;
 
-        var backfillSubs = config.Subreddits
-            .OrderBy(_ => Random.Shared.Next())
+        // Shuffle every cycle: under a mid-list rate limit the SAME tail subs would
+        // otherwise starve forever. Random order spreads the pain fairly.
+        var ordered = config.Subreddits.OrderBy(_ => Random.Shared.Next()).ToList();
+        var backfillSubs = ordered
             .Take(Math.Max(0, config.BackfillSubsPerCycle))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var subreddit in config.Subreddits)
+        var rateLimited = false;
+        var deferred = 0;
+
+        foreach (var subreddit in ordered)
         {
             if (yielded >= options.MaxItems)
             {
                 yield break;
             }
 
+            if (rateLimited)
+            {
+                deferred++;
+                continue; // circuit open: stop hammering, these subs go first-ish next cycle
+            }
+
             await Task.Delay(config.PolitenessDelayMs, cancellationToken);
-            var entries = await FetchFeedAsync($"r/{subreddit}/hot.rss", subreddit, cancellationToken);
+            var (entries, throttled) = await FetchFeedWithBackoffAsync(
+                $"r/{subreddit}/hot.rss", subreddit, cancellationToken);
+            if (throttled)
+            {
+                rateLimited = true;
+                deferred++;
+                continue;
+            }
+
             if (backfillSubs.Contains(subreddit))
             {
                 await Task.Delay(config.PolitenessDelayMs, cancellationToken);
-                entries = [.. entries, .. await FetchFeedAsync($"r/{subreddit}/top.rss?t=all", subreddit, cancellationToken)];
+                var (archive, archiveThrottled) = await FetchFeedWithBackoffAsync(
+                    $"r/{subreddit}/top.rss?t=all", subreddit, cancellationToken);
+                entries = [.. entries, .. archive];
+                rateLimited |= archiveThrottled; // hot entries already in hand; stop after this sub
             }
 
             var position = 0;
@@ -71,22 +93,72 @@ public sealed class RedditRssAdapter(
                 yield return item;
             }
         }
+
+        if (deferred > 0)
+        {
+            logger.LogWarning(
+                "Reddit rate-limited this cycle: {Deferred} sub(s) deferred to the next run. " +
+                "Nothing is lost - hot feeds persist for hours, order reshuffles, dedup is free",
+                deferred);
+        }
     }
 
-    private async Task<IReadOnlyList<XElement>> FetchFeedAsync(
+    /// <summary>
+    /// One fetch with 429-awareness: on TooManyRequests waits (Retry-After, clamped 30-120s)
+    /// and retries once. Returns Throttled=true when Reddit is still saying no - the caller
+    /// opens the circuit for the rest of the cycle instead of collecting more 429s.
+    /// </summary>
+    private async Task<(IReadOnlyList<XElement> Entries, bool Throttled)> FetchFeedWithBackoffAsync(
+        string path, string subreddit, CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            var (entries, status) = await FetchFeedAsync(path, subreddit, cancellationToken);
+            if (status != System.Net.HttpStatusCode.TooManyRequests)
+            {
+                return (entries, false);
+            }
+
+            if (attempt == 1)
+            {
+                var wait = TimeSpan.FromSeconds(45); // default between Reddit's typical 30-60s windows
+                logger.LogInformation(
+                    "Reddit 429 for r/{Subreddit}; backing off {Wait}s then retrying once",
+                    subreddit, wait.TotalSeconds);
+                await Task.Delay(wait, cancellationToken);
+            }
+        }
+
+        return ([], true);
+    }
+
+    private async Task<(IReadOnlyList<XElement> Entries, System.Net.HttpStatusCode Status)> FetchFeedAsync(
         string path, string subreddit, CancellationToken cancellationToken)
     {
         try
         {
-            var xml = await httpClient.GetStringAsync(
-                new Uri(path, UriKind.Relative), cancellationToken);
+            using var response = await httpClient.GetAsync(new Uri(path, UriKind.Relative), cancellationToken);
+            if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+            {
+                return ([], System.Net.HttpStatusCode.TooManyRequests);
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                logger.LogWarning(
+                    "Reddit RSS {Status} for r/{Subreddit}, skipping this cycle (retries next run)",
+                    (int)response.StatusCode, subreddit);
+                return ([], response.StatusCode);
+            }
+
+            var xml = await response.Content.ReadAsStringAsync(cancellationToken);
             var document = XDocument.Parse(xml);
-            return [.. document.Root?.Elements(Atom + "entry") ?? []];
+            return ([.. document.Root?.Elements(Atom + "entry") ?? []], response.StatusCode);
         }
-        catch (Exception ex) when (ex is HttpRequestException or System.Xml.XmlException or TaskCanceledException)
+        catch (Exception ex) when (ex is HttpRequestException or System.Xml.XmlException or TaskCanceledException or Polly.Timeout.TimeoutRejectedException)
         {
-            logger.LogWarning(ex, "Reddit RSS fetch failed for r/{Subreddit}, skipping", subreddit);
-            return [];
+            logger.LogWarning(ex, "Reddit RSS fetch failed for r/{Subreddit}, skipping this cycle", subreddit);
+            return ([], System.Net.HttpStatusCode.ServiceUnavailable);
         }
     }
 
