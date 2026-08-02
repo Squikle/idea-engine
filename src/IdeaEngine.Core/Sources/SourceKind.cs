@@ -21,4 +21,9 @@ public enum SourceKind
     Ebay = 8,
     GoogleTrends = 9,
     Arxiv = 10,
+
+    // Reddit-hedge additions (see ADR-0004 updates)
+    Bluesky = 11,
+    Lemmy = 12,
+    RedditRss = 13,
 }

@@ -19,8 +19,16 @@ try
         .Enrich.FromLogContext());
 
     builder.Services.AddIdeaEngineInfrastructure(builder.Configuration);
+    builder.Services.AddHostedService<StatusLifecycleService>(); // first: others report into it
     builder.Services.AddHostedService<StartupSummaryService>();
     builder.Services.AddHostedService<IngestionHostedService>();
+    builder.Services.AddHostedService<TelegramCommandService>();
+
+    // Last-resort exit hook: unhandled exceptions on non-host threads.
+    AppDomain.CurrentDomain.UnhandledException += (_, eventArgs) =>
+        StatusLifecycleService.Current?
+            .OfflineAsync($"fatal: {(eventArgs.ExceptionObject as Exception)?.GetType().Name ?? "unknown"}")
+            .GetAwaiter().GetResult();
 
     var host = builder.Build();
     await host.RunAsync();
@@ -29,6 +37,11 @@ try
 catch (Exception ex)
 {
     Log.Fatal(ex, "Host terminated unexpectedly");
+    if (StatusLifecycleService.Current is { } statusBoard)
+    {
+        await statusBoard.OfflineAsync($"crashed: {ex.GetType().Name}");
+    }
+
     return 1;
 }
 finally

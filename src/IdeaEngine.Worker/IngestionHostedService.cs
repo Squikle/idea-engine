@@ -4,35 +4,37 @@ using Microsoft.Extensions.Options;
 namespace IdeaEngine.Worker;
 
 /// <summary>
-/// Drives ingestion cycles: once shortly after startup (if enabled), then on a fixed
-/// interval. A crash inside a cycle is logged and the schedule continues; a missed
-/// interval (host asleep) simply runs at the next tick.
+/// Schedules ingestion cycles: once shortly after startup (if enabled), then on a fixed
+/// interval. Actual execution goes through <see cref="IngestionCoordinator"/> so manual
+/// bot triggers and the schedule can never overlap. A missed interval (host asleep)
+/// simply runs at the next tick.
 /// </summary>
 internal sealed class IngestionHostedService(
-    IServiceScopeFactory scopeFactory,
+    IngestionCoordinator coordinator,
+    TimeProvider timeProvider,
     IOptions<IngestionOptions> options,
     ILogger<IngestionHostedService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var config = options.Value;
+        var interval = TimeSpan.FromHours(config.IntervalHours);
 
         if (config.RunOnStartup)
         {
-            // Small delay so startup logs settle and the host is fully up.
+            // Small delay so the status board is initialized first.
             await Task.Delay(TimeSpan.FromSeconds(3), stoppingToken);
-            await RunOnceSafeAsync(stoppingToken);
+            await RunScheduledAsync(interval, stoppingToken);
         }
 
-        var interval = TimeSpan.FromHours(config.IntervalHours);
-        logger.LogInformation("Next ingestion cycles every {Hours:F1}h", interval.TotalHours);
+        logger.LogInformation("Ingestion scheduled every {Hours:F1}h", interval.TotalHours);
 
         try
         {
             using var timer = new PeriodicTimer(interval);
             while (await timer.WaitForNextTickAsync(stoppingToken))
             {
-                await RunOnceSafeAsync(stoppingToken);
+                await RunScheduledAsync(interval, stoppingToken);
             }
         }
         catch (OperationCanceledException)
@@ -41,13 +43,13 @@ internal sealed class IngestionHostedService(
         }
     }
 
-    private async Task RunOnceSafeAsync(CancellationToken cancellationToken)
+    private async Task RunScheduledAsync(TimeSpan interval, CancellationToken cancellationToken)
     {
+        coordinator.NextCycleAt = timeProvider.GetUtcNow() + interval;
+
         try
         {
-            using var scope = scopeFactory.CreateScope();
-            var ingestion = scope.ServiceProvider.GetRequiredService<IngestionService>();
-            await ingestion.RunAsync(cancellationToken);
+            await coordinator.TryRunAsync(only: null, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -55,7 +57,7 @@ internal sealed class IngestionHostedService(
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Ingestion cycle crashed; will retry at next interval");
+            logger.LogError(ex, "Scheduled ingestion cycle crashed; next attempt at {Next}", coordinator.NextCycleAt);
         }
     }
 }

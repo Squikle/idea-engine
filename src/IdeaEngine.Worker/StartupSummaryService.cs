@@ -1,11 +1,8 @@
-using IdeaEngine.Core.Notifications;
-
 namespace IdeaEngine.Worker;
 
-/// <summary>Logs a startup banner, pings the owner via Telegram, then heartbeats quietly.</summary>
+/// <summary>Logs the startup banner and a quiet periodic heartbeat. Owner-facing state lives on the status board.</summary>
 internal sealed class StartupSummaryService(
     IHostEnvironment environment,
-    INotifier notifier,
     ILogger<StartupSummaryService> logger) : BackgroundService
 {
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromMinutes(15);
@@ -18,10 +15,6 @@ internal sealed class StartupSummaryService(
             "idea-engine {Version} started ({Environment})",
             version,
             environment.EnvironmentName);
-
-        await notifier.SendAsync(
-            $"Worker online ({environment.EnvironmentName}, v{version}). First collection starts shortly.",
-            stoppingToken);
 
         using var timer = new PeriodicTimer(HeartbeatInterval);
         try

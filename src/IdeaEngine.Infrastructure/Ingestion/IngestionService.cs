@@ -23,21 +23,26 @@ public sealed class IngestionService(
     IdeaEngineDbContext db,
     IEnumerable<ISourceAdapter> adapters,
     INotifier notifier,
+    IStatusBoard statusBoard,
     TimeProvider timeProvider,
     IOptions<IngestionOptions> ingestionOptions,
     ILogger<IngestionService> logger)
 {
+    // Cycle-level status (Collecting/Idle) is owned by IngestionCoordinator;
+    // this service reports per-source progress only.
     private const int HighlightsPerSource = 5;
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-    public async Task<IngestionCycleReport> RunAsync(CancellationToken cancellationToken)
+    public async Task<IngestionCycleReport> RunAsync(
+        SourceKind? only, CancellationToken cancellationToken)
     {
         var config = ingestionOptions.Value;
-        logger.LogInformation("Ingestion cycle starting ({AdapterCount} sources)", adapters.Count());
+        var selected = adapters.Where(a => only is null || a.Kind == only).ToList();
+        logger.LogInformation("Ingestion cycle starting ({AdapterCount} sources)", selected.Count);
 
         var results = new List<SourceIngestResult>();
-        foreach (var adapter in adapters)
+        foreach (var adapter in selected)
         {
             cancellationToken.ThrowIfCancellationRequested();
             results.Add(await IngestSourceAsync(adapter, config, cancellationToken));
@@ -78,6 +83,7 @@ public sealed class IngestionService(
         try
         {
             logger.LogInformation("→ {Source}: fetching (max {Max})…", adapter.Kind, config.MaxItemsPerSource);
+            await statusBoard.UpdateAsync("Collecting", $"{adapter.Kind}…", null, cancellationToken);
 
             var items = new List<RawItem>();
             await foreach (var item in adapter.FetchAsync(
@@ -88,6 +94,8 @@ public sealed class IngestionService(
             }
 
             (stored, duplicates, highlights) = await StoreBatchAsync(items, config, cancellationToken);
+            await statusBoard.UpdateAsync(
+                "Collecting", $"{adapter.Kind}: +{stored} new", null, cancellationToken);
         }
         catch (OperationCanceledException)
         {
