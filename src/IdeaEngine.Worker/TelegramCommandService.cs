@@ -28,6 +28,7 @@ internal sealed class TelegramCommandService(
     IngestionCoordinator coordinator,
     TriageCoordinator triageCoordinator,
     INotifier notifier,
+    IProgressNotifier progressNotifier,
     TimeProvider timeProvider,
     IOptions<IngestionOptions> ingestionOptions,
     ILogger<TelegramCommandService> logger) : BackgroundService
@@ -164,7 +165,10 @@ internal sealed class TelegramCommandService(
                 _ => $"Unknown command: /{command} — try /help",
             };
 
-            await ReplyAsync(reply, cancellationToken);
+            if (reply.Length > 0)
+            {
+                await ReplyAsync(reply, cancellationToken);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -449,30 +453,36 @@ internal sealed class TelegramCommandService(
             return "Ideation is already running — results will arrive when it finishes.";
         }
 
+        var sessions = Math.Clamp(count, 1, 10);
         _ = Task.Run(
             async () =>
             {
                 try
                 {
+                    var progress = await progressNotifier.StartAsync(
+                        $"Ideation · starting {sessions} session(s)…", CancellationToken.None);
+
                     using var scope = scopeFactory.CreateScope();
                     var ideation = scope.ServiceProvider.GetRequiredService<IdeationService>();
-                    var result = await ideation.RunProductSessionsAsync(count, CancellationToken.None);
+                    var result = await ideation.RunProductSessionsAsync(sessions, progress, CancellationToken.None);
 
-                    var builder = new StringBuilder("<b>Ideation finished</b>\n");
+                    await progress.CompleteAsync(
+                        $"Ideation done · {result.Advanced} live · {result.Killed} killed · " +
+                        $"${result.CostUsd.ToString("F2", CultureInfo.InvariantCulture)}",
+                        CancellationToken.None);
+
+                    var builder = new StringBuilder("<b>Ideation results</b>\n");
                     foreach (var line in result.Lines)
                     {
                         builder.Append(System.Net.WebUtility.HtmlEncode(line)).Append('\n');
                     }
 
-                    builder.Append('\n').Append(result.Advanced).Append(" advanced · ")
-                        .Append(result.Killed).Append(" killed · ")
-                        .Append(result.Errors).Append(" errors · $")
-                        .Append(result.CostUsd.ToString("F4", CultureInfo.InvariantCulture));
                     if (result.StoppedReason is { } reason)
                     {
                         builder.Append("\nStopped: ").Append(System.Net.WebUtility.HtmlEncode(reason));
                     }
 
+                    builder.Append("\n/ideas for ratings · /research id to validate");
                     await notifier.SendAsync(builder.ToString(), CancellationToken.None);
                 }
                 catch (Exception ex)
@@ -487,14 +497,14 @@ internal sealed class TelegramCommandService(
             },
             CancellationToken.None);
 
-        return $"Running {Math.Clamp(count, 1, 10)} ideation session(s)… builder vs skeptic, grounded in your signals.";
+        return string.Empty; // the progress message is the reply
     }
 
     private string StartDrop(string? argument)
     {
         if (argument is null || argument.Trim().Length < 12)
         {
-            return "Usage: /drop <your idea pitch> (a sentence or a paragraph — the more context the better)";
+            return "Usage: /drop followed by your idea pitch — a sentence or a paragraph, more context is better.";
         }
 
         if (!_ideateGate.Wait(0))
@@ -508,21 +518,23 @@ internal sealed class TelegramCommandService(
             {
                 try
                 {
+                    var progress = await progressNotifier.StartAsync(
+                        "Drop · received, shaping your pitch…", CancellationToken.None);
+
                     long? ideaId;
                     using (var scope = scopeFactory.CreateScope())
                     {
                         var ideation = scope.ServiceProvider.GetRequiredService<IdeationService>();
-                        var shaped = await ideation.RunOperatorIdeaAsync(pitch, CancellationToken.None);
+                        var shaped = await ideation.RunOperatorIdeaAsync(pitch, progress, CancellationToken.None);
                         if (shaped.StoppedReason is { } reason)
                         {
-                            await notifier.SendAsync(
-                                $"Drop stopped: {System.Net.WebUtility.HtmlEncode(reason)}", CancellationToken.None);
+                            await progress.CompleteAsync(
+                                $"Drop stopped · {System.Net.WebUtility.HtmlEncode(reason)}", CancellationToken.None);
                             return;
                         }
 
                         ideaId = shaped.IdeaId;
-                        await notifier.SendAsync(
-                            shaped.Html + "\n<i>Researching the web now…</i>", CancellationToken.None);
+                        await notifier.SendAsync(shaped.Html, CancellationToken.None);
                     }
 
                     if (ideaId is null)
@@ -530,17 +542,28 @@ internal sealed class TelegramCommandService(
                         return;
                     }
 
+                    await progress.UpdateAsync(
+                        $"Drop · #{ideaId} stored · waiting for the research slot…", CancellationToken.None);
+
                     // Chain the full validation: wait for the research slot, then run.
                     await _researchGate.WaitAsync(CancellationToken.None);
                     try
                     {
                         using var scope = scopeFactory.CreateScope();
                         var research = scope.ServiceProvider.GetRequiredService<ResearchService>();
-                        var result = await research.RunAsync(ideaId.Value, CancellationToken.None);
-                        var message = result.StoppedReason is { } stopped
-                            ? $"Research stopped: {System.Net.WebUtility.HtmlEncode(stopped)}"
-                            : result.Html;
-                        await notifier.SendAsync(message, CancellationToken.None);
+                        var result = await research.RunAsync(ideaId.Value, progress, CancellationToken.None);
+                        if (result.StoppedReason is { } stopped)
+                        {
+                            await progress.CompleteAsync(
+                                $"Drop · research stopped: {System.Net.WebUtility.HtmlEncode(stopped)}",
+                                CancellationToken.None);
+                            return;
+                        }
+
+                        await progress.CompleteAsync(
+                            $"Drop · done: {result.Verdict?.ToUpperInvariant()} · report below",
+                            CancellationToken.None);
+                        await notifier.SendAsync(result.Html, CancellationToken.None);
                     }
                     finally
                     {
@@ -559,7 +582,7 @@ internal sealed class TelegramCommandService(
             },
             CancellationToken.None);
 
-        return "Got it. Shaping → skeptic → web research; expect 2-3 messages over ~3 min.";
+        return string.Empty; // the progress message is the reply
     }
 
     private string StartResearch(string? argument)
@@ -579,13 +602,24 @@ internal sealed class TelegramCommandService(
             {
                 try
                 {
+                    var progress = await progressNotifier.StartAsync(
+                        $"Research #{ideaId} · preparing…", CancellationToken.None);
+
                     using var scope = scopeFactory.CreateScope();
                     var research = scope.ServiceProvider.GetRequiredService<ResearchService>();
-                    var result = await research.RunAsync(ideaId, CancellationToken.None);
-                    var message = result.StoppedReason is { } reason
-                        ? $"Research stopped: {System.Net.WebUtility.HtmlEncode(reason)}"
-                        : result.Html;
-                    await notifier.SendAsync(message, CancellationToken.None);
+                    var result = await research.RunAsync(ideaId, progress, CancellationToken.None);
+                    if (result.StoppedReason is { } reason)
+                    {
+                        await progress.CompleteAsync(
+                            $"Research #{ideaId} stopped · {System.Net.WebUtility.HtmlEncode(reason)}",
+                            CancellationToken.None);
+                        return;
+                    }
+
+                    await progress.CompleteAsync(
+                        $"Research #{ideaId} done · {result.Verdict?.ToUpperInvariant()} · report below",
+                        CancellationToken.None);
+                    await notifier.SendAsync(result.Html, CancellationToken.None);
                 }
                 catch (Exception ex)
                 {
@@ -599,7 +633,7 @@ internal sealed class TelegramCommandService(
             },
             CancellationToken.None);
 
-        return $"Researching idea #{ideaId}: planning queries → web search → grounded verdict. ~2 min.";
+        return string.Empty; // the progress message is the reply
     }
 
     private string StartAdvise()
@@ -614,13 +648,23 @@ internal sealed class TelegramCommandService(
             {
                 try
                 {
+                    var progress = await progressNotifier.StartAsync(
+                        "Advisor · starting pipeline self-review…", CancellationToken.None);
+
                     using var scope = scopeFactory.CreateScope();
                     var ideation = scope.ServiceProvider.GetRequiredService<IdeationService>();
-                    var result = await ideation.RunMetaSessionAsync(CancellationToken.None);
-                    var message = result.StoppedReason is { } reason
-                        ? $"Advise stopped: {System.Net.WebUtility.HtmlEncode(reason)}"
-                        : result.Html;
-                    await notifier.SendAsync(message, CancellationToken.None);
+                    var result = await ideation.RunMetaSessionAsync(progress, CancellationToken.None);
+                    if (result.StoppedReason is { } reason)
+                    {
+                        await progress.CompleteAsync(
+                            $"Advisor stopped · {System.Net.WebUtility.HtmlEncode(reason)}", CancellationToken.None);
+                        return;
+                    }
+
+                    await progress.CompleteAsync(
+                        $"Advisor done · {result.ProposalsCount} proposals · journaled to journal/advice.md",
+                        CancellationToken.None);
+                    await notifier.SendAsync(result.Html, CancellationToken.None);
                 }
                 catch (Exception ex)
                 {
@@ -634,7 +678,7 @@ internal sealed class TelegramCommandService(
             },
             CancellationToken.None);
 
-        return "Asking the advisor what our pipeline is missing…";
+        return string.Empty; // the progress message is the reply
     }
 
     private async Task<string> BuildIdeasAsync(CancellationToken cancellationToken)
@@ -931,30 +975,49 @@ internal sealed class TelegramCommandService(
 
     private static string BuildHelp() =>
         """
-        /status — pipeline state, counts by source/stage, recent runs
-        /signals — latest extracted product-opportunity signals
-        /best [n] — top signals by value (7 days), with idea links
-        /idea 5 — full trace: thesis, skeptic verdict, evidence
-        /top — best items of the last 24h
-        /costs — AI spend, last 7 days
-        /collect — run a full cycle now
-        /collect hn|4chan|bluesky|lemmy|reddit — one source only
-        /analyze — run AI triage on queued items now
-        /ideate [n] — n builder-vs-skeptic idea sessions (default 1, max 10)
-        /drop <pitch> — YOUR idea through the full chain: shape → skeptic → web research
-        /research 5 — plan queries → Brave web search → grounded verdict (go/maybe/no-go)
-        /ideas — recent ideas, live and killed
-        /advise — AI proposes pipeline/source improvements
-        /config — current configuration
+        <b>Flow:</b> collect → analyze → signals → ideas → research
+
+        <b>Run</b>
+        /collect — fetch all sources now (or: <code>/collect hn</code>, 4chan, bluesky, lemmy, reddit)
+        /analyze — AI triage of queued items
+        /ideate 3 — AI builder-vs-skeptic sessions from your signals
+        /drop your pitch here — YOUR idea: shaped → skeptic → web research
+        /research 5 — web-validate idea number 5
+        /advise — AI reviews the pipeline itself
+
+        <b>View</b>
+        /best 8 — top signals, glance lines, idea links
+        /ideas — idea list with numbers and ratings
+        /idea 5 — full trace card for idea number 5
+        /signals · /top · /status · /costs · /config
+
+        <i>Numbers like 5 are idea ids — /ideas shows them as #5.</i>
         """;
 
-    private async Task ReplyAsync(string html, CancellationToken cancellationToken) =>
-        await _bot!.SendMessage(
-            chatId: _adminChatId,
-            text: html,
-            parseMode: ParseMode.Html,
-            linkPreviewOptions: Telegram.Bot.Types.LinkPreviewOptions.Disabled,
-            cancellationToken: cancellationToken);
+    private async Task ReplyAsync(string html, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _bot!.SendMessage(
+                chatId: _adminChatId,
+                text: html,
+                parseMode: ParseMode.Html,
+                linkPreviewOptions: Telegram.Bot.Types.LinkPreviewOptions.Disabled,
+                cancellationToken: cancellationToken);
+        }
+        catch (Telegram.Bot.Exceptions.ApiRequestException ex)
+        {
+            // A formatting slip must never kill a command: retry as plain text.
+            logger.LogWarning(ex, "HTML reply rejected; resending as plain text");
+            var plain = System.Net.WebUtility.HtmlDecode(
+                System.Text.RegularExpressions.Regex.Replace(html, "<[^>]+>", string.Empty));
+            await _bot!.SendMessage(
+                chatId: _adminChatId,
+                text: plain,
+                linkPreviewOptions: Telegram.Bot.Types.LinkPreviewOptions.Disabled,
+                cancellationToken: cancellationToken);
+        }
+    }
 
     private static string FormatWait(TimeSpan value)
     {

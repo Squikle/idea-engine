@@ -34,7 +34,8 @@ public sealed class ResearchService(
 {
     private const string StageName = "research";
 
-    public async Task<ResearchRunResult> RunAsync(long ideaId, CancellationToken cancellationToken)
+    public async Task<ResearchRunResult> RunAsync(
+        long ideaId, IProgressHandle? progress, CancellationToken cancellationToken)
     {
         var options = researchOptions.Value;
         if (!options.Enabled || !chat.IsConfigured)
@@ -87,6 +88,12 @@ public sealed class ResearchService(
         decimal cost = 0;
 
         // 1. Plan queries.
+        if (progress is not null)
+        {
+            await progress.UpdateAsync(
+                $"Research #{idea.Id} · planning web queries…", cancellationToken);
+        }
+
         var planCompletion = await chat.CompleteAsync(
             options.Model, ResearchPrompts.PlanningSystem, ideaContext, 1500, "low", cancellationToken);
         cost += RecordLedger(planCompletion, options);
@@ -110,6 +117,13 @@ public sealed class ResearchService(
         var blocks = new List<(string Query, IReadOnlyList<SearchHit> Hits)>();
         foreach (var query in queries)
         {
+            if (progress is not null)
+            {
+                await progress.UpdateAsync(
+                    $"Research #{idea.Id} · searching {blocks.Count + 1}/{queries.Count}: {Truncate(query, 45)}…",
+                    cancellationToken);
+            }
+
             await Task.Delay(options.SearchDelayMs, cancellationToken);
             blocks.Add((query, await brave.SearchAsync(query, options.ResultsPerQuery, cancellationToken)));
         }
@@ -122,6 +136,12 @@ public sealed class ResearchService(
         }
 
         // 3. Grounded synthesis (one retry on unparseable output).
+        if (progress is not null)
+        {
+            await progress.UpdateAsync(
+                $"Research #{idea.Id} · synthesizing verdict from {sourcesCount} sources…", cancellationToken);
+        }
+
         ReportDto? report = null;
         for (var attempt = 1; attempt <= 2 && report is null; attempt++)
         {

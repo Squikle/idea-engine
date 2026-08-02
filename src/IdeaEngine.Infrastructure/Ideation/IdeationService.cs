@@ -17,7 +17,7 @@ public sealed record IdeationBatchResult(
     int Sessions, int Advanced, int Killed, int Errors, decimal CostUsd,
     string? StoppedReason, IReadOnlyList<string> Lines);
 
-public sealed record MetaAdviceResult(string Html, decimal CostUsd, string? StoppedReason);
+public sealed record MetaAdviceResult(string Html, int ProposalsCount, decimal CostUsd, string? StoppedReason);
 
 public sealed record OperatorIdeaResult(long? IdeaId, string Html, decimal CostUsd, string? StoppedReason);
 
@@ -32,13 +32,15 @@ public sealed class IdeationService(
     OpenRouterChatClient chat,
     BudgetGuard budgetGuard,
     IStatusBoard statusBoard,
+    IAdviceJournal adviceJournal,
     TimeProvider timeProvider,
     IOptions<IdeationOptions> ideationOptions,
     ILogger<IdeationService> logger)
 {
     private const string StageName = "ideation";
 
-    public async Task<IdeationBatchResult> RunProductSessionsAsync(int count, CancellationToken cancellationToken)
+    public async Task<IdeationBatchResult> RunProductSessionsAsync(
+        int count, IProgressHandle? progress, CancellationToken cancellationToken)
     {
         var options = ideationOptions.Value;
         count = Math.Clamp(count, 1, options.MaxSessionsPerCommand);
@@ -77,8 +79,14 @@ public sealed class IdeationService(
 
             await statusBoard.UpdateAsync(
                 "Ideating", $"session {session}/{count}", null, cancellationToken);
+            if (progress is not null)
+            {
+                await progress.UpdateAsync(
+                    $"Ideation {session}/{count} · {advanced} live · {killed} killed · builder thinking…",
+                    cancellationToken);
+            }
 
-            var outcome = await RunSingleSessionAsync(pool, options, cancellationToken);
+            var outcome = await RunSingleSessionAsync(pool, options, progress, session, count, cancellationToken);
             totalCost += outcome.Cost;
 
             switch (outcome.Kind)
@@ -109,7 +117,8 @@ public sealed class IdeationService(
     /// /drop: shape the operator's raw pitch into a structured idea, run the skeptic,
     /// store with Origin=operator. The command layer chains web research afterwards.
     /// </summary>
-    public async Task<OperatorIdeaResult> RunOperatorIdeaAsync(string pitch, CancellationToken cancellationToken)
+    public async Task<OperatorIdeaResult> RunOperatorIdeaAsync(
+        string pitch, IProgressHandle? progress, CancellationToken cancellationToken)
     {
         var options = ideationOptions.Value;
         if (!options.Enabled || !chat.IsConfigured)
@@ -126,6 +135,10 @@ public sealed class IdeationService(
         }
 
         await statusBoard.UpdateAsync("Ideating", "shaping your idea", null, cancellationToken);
+        if (progress is not null)
+        {
+            await progress.UpdateAsync("Drop · shaping your pitch into a structured idea…", cancellationToken);
+        }
 
         decimal cost = 0;
         var shaping = await chat.CompleteAsync(
@@ -139,6 +152,12 @@ public sealed class IdeationService(
         {
             await db.SaveChangesAsync(cancellationToken);
             return new OperatorIdeaResult(null, string.Empty, cost, "could not shape the pitch (model output unparseable)");
+        }
+
+        if (progress is not null)
+        {
+            await progress.UpdateAsync(
+                $"Drop · skeptic attacking \"{Truncate(idea.Title, 45)}\"…", cancellationToken);
         }
 
         SkepticReview? review = null;
@@ -196,12 +215,13 @@ public sealed class IdeationService(
         return new OperatorIdeaResult(entity.Id, builder.ToString().TrimEnd(), cost, null);
     }
 
-    public async Task<MetaAdviceResult> RunMetaSessionAsync(CancellationToken cancellationToken)
+    public async Task<MetaAdviceResult> RunMetaSessionAsync(
+        IProgressHandle? progress, CancellationToken cancellationToken)
     {
         var options = ideationOptions.Value;
         if (!options.Enabled || !chat.IsConfigured)
         {
-            return new MetaAdviceResult(string.Empty, 0, "ideation disabled or OPENROUTER_API_KEY missing");
+            return new MetaAdviceResult(string.Empty, 0, 0, "ideation disabled or OPENROUTER_API_KEY missing");
         }
 
         var check = await budgetGuard.CheckAsync(
@@ -209,12 +229,23 @@ public sealed class IdeationService(
             WorstBuilderCallUsd(options), cancellationToken);
         if (!check.Allowed)
         {
-            return new MetaAdviceResult(string.Empty, 0, check.Reason);
+            return new MetaAdviceResult(string.Empty, 0, 0, check.Reason);
         }
 
         await statusBoard.UpdateAsync("Advising", "pipeline self-review", null, cancellationToken);
+        if (progress is not null)
+        {
+            await progress.UpdateAsync("Advisor · gathering pipeline stats…", cancellationToken);
+        }
 
         var statsMessage = await BuildPipelineStatsAsync(cancellationToken);
+
+        if (progress is not null)
+        {
+            await progress.UpdateAsync(
+                $"Advisor · {options.BuilderModel} reviewing the pipeline…", cancellationToken);
+        }
+
         var completion = await chat.CompleteAsync(
             options.BuilderModel, IdeationPrompts.MetaSystem, statsMessage,
             options.MaxCompletionTokens, options.ReasoningEffort, cancellationToken);
@@ -226,11 +257,16 @@ public sealed class IdeationService(
         if (advice?.Proposals is not { Count: > 0 } proposals)
         {
             await db.SaveChangesAsync(cancellationToken);
-            return new MetaAdviceResult(string.Empty, cost, "advisor returned nothing parseable");
+            return new MetaAdviceResult(string.Empty, 0, cost, "advisor returned nothing parseable");
         }
 
         var now = timeProvider.GetUtcNow();
         var builder = new StringBuilder("<b>Pipeline advice</b>\n");
+        var journal = new StringBuilder();
+        journal.Append("## ").Append(now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture))
+            .Append(" UTC · advisor · ").Append(options.BuilderModel).Append('\n');
+
+        var stored = 0;
         foreach (var proposal in proposals.Take(6))
         {
             if (string.IsNullOrWhiteSpace(proposal.Title))
@@ -238,6 +274,7 @@ public sealed class IdeationService(
                 continue;
             }
 
+            stored++;
             db.Ideas.Add(new IdeaEntity
             {
                 Title = Truncate(proposal.Title, 290)!,
@@ -256,16 +293,28 @@ public sealed class IdeationService(
                 .Append("]\n").Append(WebUtility.HtmlEncode(proposal.What ?? string.Empty))
                 .Append("\n<i>verify: ").Append(WebUtility.HtmlEncode(proposal.Verify ?? "-"))
                 .Append("</i>\n");
+
+            journal.Append("- **").Append(proposal.Title).Append("** [")
+                .Append(proposal.Kind ?? "other").Append(", e").Append(Math.Clamp(proposal.Effort, 1, 5))
+                .Append("] — ").Append(proposal.What)
+                .Append(" Why: ").Append(proposal.Why)
+                .Append(" Verify: ").Append(proposal.Verify).Append('\n');
         }
 
         builder.Append("\ncost: $").Append(cost.ToString("F4", CultureInfo.InvariantCulture));
         await db.SaveChangesAsync(cancellationToken);
+        await adviceJournal.AppendAsync(journal.ToString(), cancellationToken);
 
-        return new MetaAdviceResult(builder.ToString(), cost, null);
+        return new MetaAdviceResult(builder.ToString(), stored, cost, null);
     }
 
     private async Task<SessionOutcome> RunSingleSessionAsync(
-        IReadOnlyList<GroundingSignal> pool, IdeationOptions options, CancellationToken cancellationToken)
+        IReadOnlyList<GroundingSignal> pool,
+        IdeationOptions options,
+        IProgressHandle? progress,
+        int session,
+        int count,
+        CancellationToken cancellationToken)
     {
         decimal cost = 0;
 
@@ -287,6 +336,13 @@ public sealed class IdeationService(
 
         var citedIds = ParseCitedIds(idea.CitedSignals);
         var citedSignals = pool.Where(s => citedIds.Contains(s.Id)).ToList();
+
+        if (progress is not null)
+        {
+            await progress.UpdateAsync(
+                $"Ideation {session}/{count} · skeptic attacking \"{Truncate(idea.Title, 45)}\"…",
+                cancellationToken);
+        }
 
         var skepticCheck = await budgetGuard.CheckAsync(
             StageName, options.DailyUsdCap, WorstSkepticCallUsd(options),

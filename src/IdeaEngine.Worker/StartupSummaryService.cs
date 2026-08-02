@@ -64,9 +64,12 @@ internal sealed class StartupSummaryService(
             var header = state is null
                 ? $"<b>idea-engine {version}</b>"
                 : $"<b>Updated {state.Value} → {version}</b>";
-            var body = section is null
-                ? string.Empty
-                : "\n" + WebUtility.HtmlEncode(section.Length > 3200 ? section[..3200] + "…" : section);
+            var body = string.Empty;
+            if (section is not null)
+            {
+                var formatted = TelegramText.FromChangelogSection(section);
+                body = "\n" + (formatted.Length > 3200 ? formatted[..3200] + "…" : formatted);
+            }
 
             await notifier.SendAsync(header + body, cancellationToken);
 

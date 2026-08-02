@@ -121,11 +121,13 @@ public static class ServiceCollectionExtensions
         };
 
         services.AddSingleton(telegram); // consumed by the Worker command listener
+        services.AddSingleton<IAdviceJournal, FileAdviceJournal>();
 
         if (!telegram.IsConfigured)
         {
             services.AddSingleton<INotifier, NullNotifier>();
             services.AddSingleton<IStatusBoard, NullStatusBoard>();
+            services.AddSingleton<IProgressNotifier, NullProgressNotifier>();
             return;
         }
 
@@ -139,6 +141,11 @@ public static class ServiceCollectionExtensions
             telegram.AdminChatId!.Value,
             sp.GetRequiredService<TimeProvider>(),
             sp.GetRequiredService<ILogger<TelegramStatusBoard>>()));
+        services.AddSingleton<IProgressNotifier>(sp => new TelegramProgressNotifier(
+            sp.GetRequiredService<ITelegramBotClient>(),
+            telegram.AdminChatId!.Value,
+            sp.GetRequiredService<TimeProvider>(),
+            sp.GetRequiredService<ILogger<TelegramProgressNotifier>>()));
     }
 
     private static void AddSourceAdapters(IServiceCollection services, IConfiguration configuration)

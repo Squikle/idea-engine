@@ -5,6 +5,18 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.8.0 — 2026-08-02
+
+- Live progress: /ideate /drop /research /advise now show ONE message edited in
+  place through the steps (shaping → skeptic → searching 3/6 → synthesizing),
+  no step spam
+- Advice journal: /advise proposals append to journal/advice.md - a read-only
+  log the architect reads and turns into changes on request
+- Fixed /help crash (raw angle brackets vs Telegram HTML) and reformatted it
+- Patchnote messages properly formatted (unwrapped bullets, code spans)
+- Any HTML-rejected reply auto-retries as plain text - formatting can never
+  kill a command again
+
 ## 0.7.0 — 2026-08-02
 
 - `/research <id>` - the final validation stage closing the loop: plans 4-8 web

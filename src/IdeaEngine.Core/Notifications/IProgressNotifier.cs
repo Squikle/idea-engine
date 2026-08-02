@@ -1,0 +1,20 @@
+namespace IdeaEngine.Core.Notifications;
+
+/// <summary>
+/// One live progress surface per long-running operation: a single message edited in
+/// place through the steps (never a message per step). Implementations never throw.
+/// </summary>
+public interface IProgressNotifier
+{
+    Task<IProgressHandle> StartAsync(string text, CancellationToken cancellationToken);
+}
+
+/// <summary>Handle to the operation's progress message.</summary>
+public interface IProgressHandle
+{
+    /// <summary>Edit the message in place (throttled; identical text skipped).</summary>
+    Task UpdateAsync(string text, CancellationToken cancellationToken);
+
+    /// <summary>Final edit; always applied regardless of throttling.</summary>
+    Task CompleteAsync(string text, CancellationToken cancellationToken);
+}
