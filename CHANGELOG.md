@@ -5,6 +5,20 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.24.0 — 2026-08-02
+
+- Budget stops no longer fail jobs: they go ⏸ HELD and AUTO-RESUME at cap reset
+  (00:00 UTC ≈ 20:00 Ontario) - the "wall of failed jobs after the cap" incident
+  can't repeat; manual mass-retry is dead
+- ONE coalesced cap card per day (instead of a card per starved job) with
+  💸 +$5 & resume all / ▶️ resume without bump
+- Bumping (+$5 button or /bump) now releases ALL held jobs automatically and
+  reports how many resumed
+- /queue job control: ⏸ held section with resume time, ✖️ cancel buttons per
+  waiting/held job, 🔁 retry-all-failed and ▶️ resume-all rows; /cancel 7
+  command (running jobs finish - no mid-flight kill by design)
+- Non-budget failures keep the per-job retry card (those are real errors)
+
 ## 0.23.0 — 2026-08-02
 
 - Status board desync fixed structurally: dig ⛏ / sweep 🔄 / audit 🧾 now report

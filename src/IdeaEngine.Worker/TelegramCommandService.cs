@@ -103,7 +103,8 @@ internal sealed class TelegramCommandService(
                 new BotCommand { Command = "playbooks", Description = "strategic lenses the machine uses" },
                 new BotCommand { Command = "drop", Description = "submit YOUR idea: shape, skeptic, web research" },
                 new BotCommand { Command = "research", Description = "web-research a candidate idea" },
-                new BotCommand { Command = "queue", Description = "jobs: running, waiting, failed" },
+                new BotCommand { Command = "queue", Description = "jobs: running, held, failed + controls" },
+                new BotCommand { Command = "cancel", Description = "cancel a queued/held job" },
                 new BotCommand { Command = "dig", Description = "excavate a niche/topic into opportunities" },
                 new BotCommand { Command = "audit", Description = "find ideas that fell through the cracks" },
                 new BotCommand { Command = "sweep", Description = "re-eval verdicts made by an older brain" },
@@ -184,6 +185,7 @@ internal sealed class TelegramCommandService(
                 "advise" => StartAdvise(),
                 "ideas" => await SendIdeasPageAsync(argument, cancellationToken),
                 "queue" => await SendQueueAsync(cancellationToken),
+                "cancel" => await CancelJobAsync(argument, cancellationToken),
                 "config" => BuildConfig(),
                 "help" or "start" => BuildHelp(),
                 _ => $"Unknown command: /{command} — try /help",
@@ -930,18 +932,53 @@ internal sealed class TelegramCommandService(
                 var total = await scope.ServiceProvider
                     .GetRequiredService<IdeaEngine.Infrastructure.Ai.BudgetGuard>()
                     .BumpTodayAsync(5m, cancellationToken);
-                await _bot!.AnswerCallbackQuery(
-                    callback.Id, $"Caps +$5 for today (total bump ${total:F0})",
-                    showAlert: true, cancellationToken: cancellationToken);
+                var jobsService = scope.ServiceProvider.GetRequiredService<JobService>();
+                var released = await jobsService.ReleaseHeldAsync(cancellationToken);
                 if (long.TryParse(parts[2], out var bumpJobId) && bumpJobId > 0)
                 {
-                    using var retryScope = scopeFactory.CreateScope();
-                    await retryScope.ServiceProvider.GetRequiredService<JobService>()
-                        .RetryAsync(bumpJobId, cancellationToken);
-                    await notifier.SendAsync(
-                        $"💸 Caps bumped +$5 for today · job #{bumpJobId} re-queued.", cancellationToken);
+                    await jobsService.RetryAsync(bumpJobId, cancellationToken);
                 }
 
+                await _bot!.AnswerCallbackQuery(
+                    callback.Id, $"Caps +$5 (bump ${total:F0}) · {released} held job(s) resumed",
+                    showAlert: true, cancellationToken: cancellationToken);
+                await notifier.SendAsync(
+                    $"💸 <b>+$5 for today</b> (total bump ${total:F0}) · ▶️ resumed {released} held job(s).",
+                    cancellationToken);
+                return;
+            }
+
+            if (parts.Length >= 2 && parts[0] == "job" && parts[1] == "releaseheld")
+            {
+                using var scope = scopeFactory.CreateScope();
+                var released = await scope.ServiceProvider.GetRequiredService<JobService>()
+                    .ReleaseHeldAsync(cancellationToken);
+                await _bot!.AnswerCallbackQuery(
+                    callback.Id, $"▶️ {released} held job(s) resumed (will re-hold if the cap is still gone)",
+                    showAlert: true, cancellationToken: cancellationToken);
+                return;
+            }
+
+            if (parts.Length >= 2 && parts[0] == "job" && parts[1] == "retryall")
+            {
+                using var scope = scopeFactory.CreateScope();
+                var retried = await scope.ServiceProvider.GetRequiredService<JobService>()
+                    .RetryAllFailedAsync(cancellationToken);
+                await _bot!.AnswerCallbackQuery(
+                    callback.Id, $"🔁 {retried} failed job(s) re-queued", cancellationToken: cancellationToken);
+                return;
+            }
+
+            if (parts.Length >= 3 && parts[0] == "job" && parts[1] == "cancel"
+                && long.TryParse(parts[2], out var cancelJobId))
+            {
+                using var scope = scopeFactory.CreateScope();
+                var canceled = await scope.ServiceProvider.GetRequiredService<JobService>()
+                    .CancelAsync(cancelJobId, cancellationToken);
+                await _bot!.AnswerCallbackQuery(
+                    callback.Id,
+                    canceled ? $"✖️ job #{cancelJobId} canceled" : "not cancelable (already running/done)",
+                    cancellationToken: cancellationToken);
                 return;
             }
 
@@ -1117,6 +1154,21 @@ internal sealed class TelegramCommandService(
         _ => "All",
     };
 
+    private async Task<string> CancelJobAsync(string? argument, CancellationToken cancellationToken)
+    {
+        if (!long.TryParse(argument, out var jobId))
+        {
+            return "Usage: /cancel 7 (job ids are shown by /queue; only queued/held jobs cancel — running ones finish)";
+        }
+
+        using var scope = scopeFactory.CreateScope();
+        var canceled = await scope.ServiceProvider.GetRequiredService<JobService>()
+            .CancelAsync(jobId, cancellationToken);
+        return canceled
+            ? $"✖️ Job <b>#{jobId}</b> canceled."
+            : $"Job #{jobId} isn't cancelable (running, done, or unknown) — /queue for state.";
+    }
+
     private async Task<string> SendQueueAsync(CancellationToken cancellationToken)
     {
         using var scope = scopeFactory.CreateScope();
@@ -1125,6 +1177,10 @@ internal sealed class TelegramCommandService(
 
         var active = await db.Jobs
             .Where(j => j.Status == "queued" || j.Status == "running")
+            .OrderBy(j => j.Id)
+            .ToListAsync(cancellationToken);
+        var held = await db.Jobs
+            .Where(j => j.Status == "held")
             .OrderBy(j => j.Id)
             .ToListAsync(cancellationToken);
         var failed = await db.Jobs
@@ -1161,6 +1217,19 @@ internal sealed class TelegramCommandService(
                 .Append('\n');
         }
 
+        if (held.Count > 0)
+        {
+            builder.Append("\n<b>⏸ Held (budget)</b> — auto-resume ");
+            var until = held.Min(j => j.HoldUntil) ?? DateTimeOffset.UtcNow;
+            builder.Append(TimeZoneInfo.ConvertTime(until, timeZone).ToString("HH:mm", CultureInfo.InvariantCulture))
+                .Append(' ').Append(IdeaEngine.Core.Common.Scheduling.ZoneLabel(timeZone)).Append('\n');
+            foreach (var job in held.Take(6))
+            {
+                builder.Append("• <b>#").Append(job.Id).Append("</b> ").Append(job.Kind)
+                    .Append(' ').Append(JobLabel(job)).Append('\n');
+            }
+        }
+
         List<Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton> retryRow = [];
         if (failed.Count > 0)
         {
@@ -1179,6 +1248,41 @@ internal sealed class TelegramCommandService(
 
         builder.Append("\n✅ ").Append(doneToday).Append(" done in 24h");
 
+        var rows = new List<Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton[]>();
+        var cancelable = active.Where(j => j.Status == "queued").Concat(held).Take(6)
+            .Select(j => Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton
+                .WithCallbackData($"✖️ #{j.Id}", $"job|cancel|{j.Id}"))
+            .ToArray();
+        if (cancelable.Length > 0)
+        {
+            rows.Add(cancelable);
+        }
+
+        var bulkRow = new List<Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton>();
+        if (held.Count > 0)
+        {
+            bulkRow.Add(Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton
+                .WithCallbackData($"💸 +$5 resume {held.Count}", "budget|bump|0"));
+            bulkRow.Add(Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton
+                .WithCallbackData("▶️ resume now", "job|releaseheld|0"));
+        }
+
+        if (failed.Count > 0)
+        {
+            bulkRow.Add(Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton
+                .WithCallbackData("🔁 retry all failed", "job|retryall|0"));
+        }
+
+        if (bulkRow.Count > 0)
+        {
+            rows.Add([.. bulkRow]);
+        }
+
+        if (retryRow.Count > 0)
+        {
+            rows.Add([.. retryRow]);
+        }
+
         await _bot!.SendMessage(
             chatId: _adminChatId,
             text: builder.ToString(),
@@ -1186,8 +1290,8 @@ internal sealed class TelegramCommandService(
             replyParameters: runningJob?.ProgressMessageId is { } liveLogId
                 ? new Telegram.Bot.Types.ReplyParameters { MessageId = liveLogId }
                 : null,
-            replyMarkup: retryRow.Count > 0
-                ? new Telegram.Bot.Types.ReplyMarkups.InlineKeyboardMarkup(retryRow)
+            replyMarkup: rows.Count > 0
+                ? new Telegram.Bot.Types.ReplyMarkups.InlineKeyboardMarkup(rows)
                 : null,
             linkPreviewOptions: Telegram.Bot.Types.LinkPreviewOptions.Disabled,
             cancellationToken: cancellationToken);
@@ -1326,10 +1430,12 @@ internal sealed class TelegramCommandService(
         var total = await scope.ServiceProvider
             .GetRequiredService<IdeaEngine.Infrastructure.Ai.BudgetGuard>()
             .BumpTodayAsync(5m, cancellationToken);
+        var released = await scope.ServiceProvider.GetRequiredService<JobService>()
+            .ReleaseHeldAsync(cancellationToken);
         var effective = budgetOptions.Value.GlobalDailyUsdCap + total;
         return $"💸 <b>+$5 for today.</b> Global daily cap now <b>${effective:F0}</b> " +
-            $"(${budgetOptions.Value.GlobalDailyUsdCap:F0} base + ${total:F0} bumped); every stage cap rises by the same +${total:F0}. " +
-            "Monthly ceiling unchanged. Failed jobs: /queue → 🔁.";
+            $"(${budgetOptions.Value.GlobalDailyUsdCap:F0} base + ${total:F0} bumped); stage caps rise too. " +
+            $"▶️ resumed {released} held job(s). Monthly ceiling unchanged.";
     }
 
     private async Task<string> SetIdeaStatusAsync(
@@ -1740,7 +1846,8 @@ internal sealed class TelegramCommandService(
         /sweep — verdict-improvement pass: old/under-researched ideas re-screened cheaply,
         worthy ones re-researched ON TOP of previous findings
         /kill 5 · /promote 5 — override any verdict with YOUR decision
-        /queue — jobs overview; replies to the live log of the running job
+        /queue — jobs: running/held/failed + cancel ✖️, resume ▶️, retry-all 🔁 buttons
+        /cancel 7 — cancel a queued/held job (running ones finish)
         /verify 5 — mark reviewed (default /ideas hides verified) · /bump — +$5 today
         /note 5 your argument — next research must address it · /appeal 5 — opus reviews the verdict
         /advise — AI reviews the pipeline itself

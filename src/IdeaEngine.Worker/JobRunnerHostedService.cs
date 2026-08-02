@@ -25,6 +25,9 @@ internal sealed class JobRunnerHostedService(
 {
     private const int MaxAttempts = 2;
 
+    /// <summary>One coalesced budget card per day - not one per starved job.</summary>
+    private DateOnly _capCardShownOn;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await Task.Delay(TimeSpan.FromSeconds(8), stoppingToken);
@@ -196,8 +199,7 @@ internal sealed class JobRunnerHostedService(
 
         if (result.StoppedReason is { } stopped)
         {
-            await progress.CompleteAsync($"⛔ research stopped: {stopped}", CancellationToken.None);
-            await FailWithButtonsAsync(job, ideaId, stopped, cancellationToken);
+            await HandleStopAsync(job, ideaId, stopped, progress, cancellationToken);
             return;
         }
 
@@ -239,8 +241,7 @@ internal sealed class JobRunnerHostedService(
 
         if (result.StoppedReason is { } reason)
         {
-            await progress.CompleteAsync($"⛏ ⛔ stopped · {reason}", CancellationToken.None);
-            await FailWithButtonsAsync(job, null, reason, cancellationToken);
+            await HandleStopAsync(job, null, reason, progress, cancellationToken);
             return;
         }
 
@@ -309,8 +310,7 @@ internal sealed class JobRunnerHostedService(
 
         if (result.StoppedReason is { } reason)
         {
-            await progress.CompleteAsync($"⛔ stopped · {reason}", CancellationToken.None);
-            await FailWithButtonsAsync(job, payload.IdeaId, reason, cancellationToken);
+            await HandleStopAsync(job, payload.IdeaId, reason, progress, cancellationToken);
             return;
         }
 
@@ -402,6 +402,71 @@ internal sealed class JobRunnerHostedService(
         {
             logger.LogWarning(ex, "Report-with-buttons failed; plain fallback");
             await notifier.SendAsync(result.Html, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Routes a stop: budget-cap stops PARK the job (auto-resumes at UTC-midnight cap reset,
+    /// or instantly on bump) with one coalesced card per day; real failures stay failures.
+    /// </summary>
+    private async Task HandleStopAsync(
+        JobEntity job, long? ideaId, string reason, IProgressHandle progress, CancellationToken cancellationToken)
+    {
+        var isBudget = reason.Contains("cap", StringComparison.OrdinalIgnoreCase);
+        if (!isBudget)
+        {
+            await progress.CompleteAsync($"⛔ stopped · {reason}", CancellationToken.None);
+            await FailWithButtonsAsync(job, ideaId, reason, cancellationToken);
+            return;
+        }
+
+        var resetAt = new DateTimeOffset(DateTime.UtcNow.Date.AddDays(1), TimeSpan.Zero);
+        using (var scope = scopeFactory.CreateScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<JobService>()
+                .HoldAsync(job.Id, resetAt, reason, cancellationToken);
+        }
+
+        await progress.CompleteAsync(
+            $"⏸ held · budget cap · auto-resumes at cap reset (or 💸 bump to resume now)",
+            CancellationToken.None);
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        if (_capCardShownOn == today)
+        {
+            return; // the day's card already offers resume-all
+        }
+
+        _capCardShownOn = today;
+        var bot = serviceProvider.GetService<Telegram.Bot.ITelegramBotClient>();
+        var telegram = serviceProvider.GetService<IdeaEngine.Infrastructure.Notifications.TelegramOptions>();
+        if (bot is null || telegram is not { IsConfigured: true })
+        {
+            return;
+        }
+
+        try
+        {
+            await bot.SendMessage(
+                chatId: telegram.AdminChatId!.Value,
+                text: $"⏸ <b>Budget cap reached</b> — jobs are being HELD, not failed.\n" +
+                    $"<i>{System.Net.WebUtility.HtmlEncode(IdeaEngine.Core.Common.TextClip.Clip(reason, 120))}</i>\n" +
+                    "They auto-resume at cap reset (00:00 UTC ≈ 20:00 Ontario). Or resume now:",
+                parseMode: Telegram.Bot.Types.Enums.ParseMode.Html,
+                replyMarkup: new Telegram.Bot.Types.ReplyMarkups.InlineKeyboardMarkup(
+                [
+                    [
+                        Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton.WithCallbackData(
+                            "💸 +$5 & resume all", "budget|bump|0"),
+                        Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton.WithCallbackData(
+                            "▶️ resume without bump", "job|releaseheld|0"),
+                    ],
+                ]),
+                cancellationToken: cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Cap card send failed");
         }
     }
 

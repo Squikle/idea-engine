@@ -61,8 +61,10 @@ public sealed class JobService(IdeaEngineDbContext db, TimeProvider timeProvider
 
     public async Task<JobEntity?> ClaimNextAsync(CancellationToken cancellationToken)
     {
+        var now = timeProvider.GetUtcNow();
         var job = await db.Jobs
-            .Where(j => j.Status == "queued")
+            .Where(j => j.Status == "queued"
+                || (j.Status == "held" && j.HoldUntil != null && j.HoldUntil <= now))
             .OrderBy(j => j.Id)
             .FirstOrDefaultAsync(cancellationToken);
         if (job is null)
@@ -107,6 +109,46 @@ public sealed class JobService(IdeaEngineDbContext db, TimeProvider timeProvider
                     .SetProperty(j => j.UpdatedAt, timeProvider.GetUtcNow()),
                 cancellationToken);
     }
+
+    /// <summary>Park a job until the caps reset (or an owner bump releases it earlier).</summary>
+    public async Task HoldAsync(long jobId, DateTimeOffset until, string reason, CancellationToken cancellationToken) =>
+        await db.Jobs
+            .Where(j => j.Id == jobId)
+            .ExecuteUpdateAsync(
+                s => s.SetProperty(j => j.Status, "held")
+                    .SetProperty(j => j.HoldUntil, until)
+                    .SetProperty(j => j.LastError, reason)
+                    .SetProperty(j => j.UpdatedAt, timeProvider.GetUtcNow()),
+                cancellationToken);
+
+    /// <summary>Release every held job immediately (bump pressed / owner impatience).</summary>
+    public async Task<int> ReleaseHeldAsync(CancellationToken cancellationToken) =>
+        await db.Jobs
+            .Where(j => j.Status == "held")
+            .ExecuteUpdateAsync(
+                s => s.SetProperty(j => j.Status, "queued")
+                    .SetProperty(j => j.HoldUntil, (DateTimeOffset?)null)
+                    .SetProperty(j => j.UpdatedAt, timeProvider.GetUtcNow()),
+                cancellationToken);
+
+    public async Task<int> RetryAllFailedAsync(CancellationToken cancellationToken) =>
+        await db.Jobs
+            .Where(j => j.Status == "failed")
+            .ExecuteUpdateAsync(
+                s => s.SetProperty(j => j.Status, "queued")
+                    .SetProperty(j => j.Attempts, 0)
+                    .SetProperty(j => j.LastError, (string?)null)
+                    .SetProperty(j => j.UpdatedAt, timeProvider.GetUtcNow()),
+                cancellationToken);
+
+    /// <summary>Cancel a waiting/held job. Running jobs finish their current stage.</summary>
+    public async Task<bool> CancelAsync(long jobId, CancellationToken cancellationToken) =>
+        await db.Jobs
+            .Where(j => j.Id == jobId && (j.Status == "queued" || j.Status == "held"))
+            .ExecuteUpdateAsync(
+                s => s.SetProperty(j => j.Status, "canceled")
+                    .SetProperty(j => j.UpdatedAt, timeProvider.GetUtcNow()),
+                cancellationToken) > 0;
 
     public async Task RequeueForRetryAsync(long jobId, string error, CancellationToken cancellationToken) =>
         await db.Jobs

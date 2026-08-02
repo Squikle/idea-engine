@@ -15,8 +15,12 @@ public sealed class JobEntity
     /// <summary>Stage checkpoints live here too (e.g. drop stores IdeaId once shaped).</summary>
     public required string PayloadJson { get; set; }
 
-    /// <summary>queued | running | done | failed.</summary>
+    /// <summary>queued | running | held | done | failed | canceled.
+    /// held = temporarily parked (budget cap); auto-resumes when HoldUntil passes.</summary>
     public required string Status { get; set; }
+
+    /// <summary>When a held job becomes claimable again (cap reset / bump releases earlier).</summary>
+    public DateTimeOffset? HoldUntil { get; set; }
 
     public int Attempts { get; set; }
 
