@@ -48,7 +48,7 @@ public static class Ui
     public static string IdeaStatus(string status) => status switch
     {
         "hot" => "🔥",
-        "validated" => "✅",
+        "uncertain" or "validated" => "🟨",
         "candidate" => "🟡",
         _ => "☠️",
     };

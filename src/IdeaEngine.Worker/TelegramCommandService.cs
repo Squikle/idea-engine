@@ -101,6 +101,8 @@ internal sealed class TelegramCommandService(
                 new BotCommand { Command = "ideate", Description = "AI builder-vs-skeptic idea sessions" },
                 new BotCommand { Command = "drop", Description = "submit YOUR idea: shape, skeptic, web research" },
                 new BotCommand { Command = "research", Description = "web-research a candidate idea" },
+                new BotCommand { Command = "kill", Description = "your verdict: dismiss an idea" },
+                new BotCommand { Command = "promote", Description = "your verdict: mark an idea hot" },
                 new BotCommand { Command = "ideas", Description = "recent ideas (live and killed)" },
                 new BotCommand { Command = "advise", Description = "AI reviews our own pipeline for gaps" },
                 new BotCommand { Command = "config", Description = "current configuration" },
@@ -153,6 +155,8 @@ internal sealed class TelegramCommandService(
                 "ideate" => StartIdeate(argument),
                 "drop" => StartDrop(argument),
                 "research" => StartResearch(argument),
+                "kill" => await SetIdeaStatusAsync(argument, "dismissed", cancellationToken),
+                "promote" => await SetIdeaStatusAsync(argument, "hot", cancellationToken),
                 "advise" => StartAdvise(),
                 "ideas" => await BuildIdeasAsync(cancellationToken),
                 "config" => BuildConfig(),
@@ -229,8 +233,8 @@ internal sealed class TelegramCommandService(
         builder.Append("signals: ").Append(signalsTotal).Append(" total · +")
             .Append(signals24h).Append(" in 24h\n");
         builder.Append("ideas: 🟡 ").Append(ideaCounts.GetValueOrDefault("candidate"))
-            .Append(" (").Append(unresearched).Append(" await research) · ✅ ")
-            .Append(ideaCounts.GetValueOrDefault("validated")).Append(" · 🔥 ")
+            .Append(" (").Append(unresearched).Append(" await research) · 🟨 ")
+            .Append(ideaCounts.GetValueOrDefault("uncertain") + ideaCounts.GetValueOrDefault("validated")).Append(" · 🔥 ")
             .Append(ideaCounts.GetValueOrDefault("hot")).Append(" · ☠️ ")
             .Append(ideaCounts.GetValueOrDefault("dismissed")).Append('\n');
 
@@ -590,6 +594,31 @@ internal sealed class TelegramCommandService(
         return string.Empty; // the progress message is the reply
     }
 
+    private async Task<string> SetIdeaStatusAsync(
+        string? argument, string newStatus, CancellationToken cancellationToken)
+    {
+        if (!long.TryParse(argument, out var ideaId))
+        {
+            return $"Usage: /{(newStatus == "hot" ? "promote" : "kill")} 5";
+        }
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
+        var idea = await db.Ideas.FindAsync([ideaId], cancellationToken);
+        if (idea is null)
+        {
+            return $"No idea #{ideaId}.";
+        }
+
+        var previous = idea.Status;
+        idea.Status = newStatus;
+        await db.SaveChangesAsync(cancellationToken);
+
+        return $"{IdeaEngine.Core.Common.Ui.IdeaStatus(newStatus)} #{ideaId} " +
+            $"{System.Net.WebUtility.HtmlEncode(idea.Title.Length > 60 ? idea.Title[..59] + "…" : idea.Title)}" +
+            $" — {previous} → <b>{newStatus}</b> (your call, recorded)";
+    }
+
     private string StartResearch(string? argument)
     {
         if (!long.TryParse(argument, out var ideaId))
@@ -703,19 +732,19 @@ internal sealed class TelegramCommandService(
 
         var rated = ideas
             .Select(i => new { Idea = i, Rating = IdeaJson.ComputeRating(i) })
-            .OrderByDescending(x => x.Idea.Status is "hot" or "validated" or "candidate")
+            .OrderByDescending(x => x.Idea.Status is "hot" or "uncertain" or "validated" or "candidate")
             .ThenByDescending(x => x.Idea.Status == "hot")
             .ThenByDescending(x => x.Rating)
             .ThenByDescending(x => x.Idea.Id)
             .Take(12);
 
-        var builder = new StringBuilder("<b>💡 Ideas</b> — 🔥 hot · ✅ validated · 🟡 candidate · ☠️ dead\n\n");
+        var builder = new StringBuilder("<b>💡 Ideas</b> — 🔥 hot · 🟨 uncertain · 🟡 candidate · ☠️ dead\n\n");
         foreach (var entry in rated)
         {
             builder.Append(IdeaEngine.Core.Common.Ui.IdeaStatus(entry.Idea.Status))
                 .Append(" <b>#").Append(entry.Idea.Id).Append("</b> ")
                 .Append(entry.Idea.Origin == "operator" ? "🧑 " : string.Empty)
-                .Append('r').Append(entry.Rating.ToString("F2", CultureInfo.InvariantCulture))
+                .Append((entry.Rating * 100).ToString("F0", CultureInfo.InvariantCulture)).Append('%')
                 .Append(" <i>").Append(entry.Idea.Category)
                 .Append("/e").Append(entry.Idea.EffortScale).Append("</i> ")
                 .Append(System.Net.WebUtility.HtmlEncode(entry.Idea.Title)).Append('\n');
@@ -860,7 +889,7 @@ internal sealed class TelegramCommandService(
             .Append(System.Net.WebUtility.HtmlEncode(idea.Title)).Append("</b>\n")
             .Append(idea.Status).Append(" · ")
             .Append(idea.Category).Append(" · effort ").Append(idea.EffortScale)
-            .Append(" · rating ").Append(rating.ToString("F2", CultureInfo.InvariantCulture)).Append("\n\n")
+            .Append(" · rating ").Append((rating * 100).ToString("F0", CultureInfo.InvariantCulture)).Append("%\n\n")
             .Append(System.Net.WebUtility.HtmlEncode(idea.Thesis)).Append('\n');
 
         AppendLine(builder, "Target", idea.TargetUser);
@@ -869,10 +898,10 @@ internal sealed class TelegramCommandService(
 
         if (lastResearch is not null)
         {
-            builder.Append("<b>🔎 Research:</b> ").Append(IdeaEngine.Core.Common.Ui.Verdict(lastResearch.Verdict))
-                .Append(" (conf ").Append(lastResearch.Confidence.ToString("F2", CultureInfo.InvariantCulture))
-                .Append(", ").Append(lastResearch.SearchesUsed).Append(" searches, $")
-                .Append(lastResearch.CostUsd.ToString("F3", CultureInfo.InvariantCulture)).Append(")\n");
+            builder.Append("<b>🔎 Research (final):</b> ").Append(IdeaEngine.Core.Common.Ui.Verdict(lastResearch.Verdict))
+                .Append(" · confidence ").Append((lastResearch.Confidence * 100).ToString("F0", CultureInfo.InvariantCulture))
+                .Append("% · ").Append(lastResearch.SearchesUsed).Append(" searches · $")
+                .Append(lastResearch.CostUsd.ToString("F3", CultureInfo.InvariantCulture)).Append('\n');
 
             var answers = researchReport?.Answers ?? [];
             var answeredCount = answers.Count(a => a.IsAnswered);
@@ -900,8 +929,18 @@ internal sealed class TelegramCommandService(
 
         if (skeptic is not null)
         {
-            builder.Append("\n<b>🥊 Skeptic</b> (").Append(skeptic.Verdict ?? "?")
-                .Append(", conf ").Append(skeptic.Confidence.ToString("F2", CultureInfo.InvariantCulture)).Append(")\n");
+            builder.Append("\n<b>🥊 Skeptic (pre-research):</b> ")
+                .Append(string.Equals(skeptic.Verdict, "advance", StringComparison.OrdinalIgnoreCase) ? "🟢 advance" : "☠️ kill")
+                .Append(" · confidence ").Append((skeptic.Confidence * 100).ToString("F0", CultureInfo.InvariantCulture))
+                .Append("%\n");
+            if (lastResearch is not null
+                && !string.Equals(skeptic.Verdict, "advance", StringComparison.OrdinalIgnoreCase)
+                && lastResearch.Verdict != "no-go")
+            {
+                builder.Append("⚔️ <i>Disagreement: skeptic killed it, web research kept it alive — treat as unproven; decide (/kill ")
+                    .Append(idea.Id).Append(" · /promote ").Append(idea.Id)
+                    .Append(") or dig again (/research ").Append(idea.Id).Append(")</i>\n");
+            }
 
             foreach (var reason in (skeptic.KillReasons ?? []).Concat(skeptic.Weaknesses ?? []).Take(3))
             {
@@ -983,6 +1022,7 @@ internal sealed class TelegramCommandService(
         /ideate 3 — AI builder-vs-skeptic sessions from your signals
         /drop your pitch here — YOUR idea: shaped → skeptic → web research
         /research 5 — web-validate idea number 5
+        /kill 5 · /promote 5 — override any verdict with YOUR decision
         /advise — AI reviews the pipeline itself
 
         <b>View</b>

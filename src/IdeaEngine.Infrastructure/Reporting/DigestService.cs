@@ -116,7 +116,7 @@ public sealed class DigestService(
         }
 
         // Ideas born today.
-        var live = ideas.Where(i => i.Status is "candidate" or "validated" or "hot").ToList();
+        var live = ideas.Where(i => i.Status is "candidate" or "uncertain" or "validated" or "hot").ToList();
         var killed = ideas.Count - live.Count;
         builder.Append("\n<b>💡 Ideas</b>: ").Append(live.Count).Append(" 🟢 · ")
             .Append(killed).Append(" ☠️\n");

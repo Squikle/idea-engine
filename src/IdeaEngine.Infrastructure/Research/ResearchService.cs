@@ -214,7 +214,7 @@ public sealed class ResearchService(
         {
             "go" => "hot",
             "no-go" => "dismissed",
-            _ => "validated",
+            _ => "uncertain",
         };
 
         await db.SaveChangesAsync(cancellationToken);
@@ -361,9 +361,9 @@ public sealed class ResearchService(
         var builder = new StringBuilder();
         builder.Append(Ui.Research).Append(" <b>Research #").Append(idea.Id).Append(" · ")
             .Append(WebUtility.HtmlEncode(idea.Title)).Append("</b>\n")
-            .Append("Verdict: <b>").Append(Ui.Verdict(verdict)).Append("</b> (conf ")
-            .Append(report.Confidence.ToString("F2", CultureInfo.InvariantCulture))
-            .Append(") → status ").Append(idea.Status).Append('\n');
+            .Append("Verdict: <b>").Append(Ui.Verdict(verdict)).Append("</b> · confidence ")
+            .Append((report.Confidence * 100).ToString("F0", CultureInfo.InvariantCulture))
+            .Append("% → status ").Append(idea.Status).Append('\n');
 
         var competitors = (report.Competitors ?? []).Take(4).ToList();
         if (competitors.Count > 0)

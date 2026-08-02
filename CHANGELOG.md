@@ -5,6 +5,18 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.12.0 — 2026-08-02
+
+- Verdict clarity: research "maybe" now maps to status `uncertain` 🟨 (was
+  "validated" ✅ - a green mark on a coin-flip was misleading); existing rows
+  migrated
+- /idea card tells the pipeline story in order: Research (final) first, then
+  Skeptic labeled "pre-research"; when they disagree an explicit ⚔️ line says
+  "skeptic killed it, research kept it alive - treat as unproven" with the
+  decision commands inline
+- All confidences and ratings shown as percentages (90%, not 0.90)
+- /kill 5 and /promote 5: operator override - your verdict beats any AI verdict
+
 ## 0.11.0 — 2026-08-02
 
 - DEEP RESEARCH: closure-driven loop - unanswered questions trigger follow-up
