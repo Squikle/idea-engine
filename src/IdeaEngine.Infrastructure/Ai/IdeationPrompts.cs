@@ -19,8 +19,15 @@ public static class IdeationPrompts
         {"title":"...","thesis":"2-3 sentences: what it is and why now","category":"saas|app|website|3dprint|hardware|wearable|service|content","target_user":"...","effort":1-5,"monetization":"...","distribution_note":"realistic first channel; mention Ukraine/Canada angle only if genuine","cited_signals":["S12","S45"],"assumptions":["..."]}
         Rules:
         - Ground the idea in at least 2 cited signals; use their ids. Ideas without grounding are worthless.
-        - Prefer boring-but-buyable over clever-but-vague. No crypto/blockchain.
-        - effort: 1=weekend project, 3=months of evenings, 5=a real business build.
+        - GARAGE-SCALE ONLY: launchable by 1-3 people from an apartment/garage - code, apps, websites,
+          3D printing, small-batch making, dropshipping, content, simple services. Skills learnable in
+          weeks/months are fine; years of study (medicine, aerospace) or factories/warehouses/fleets are not.
+        - Nothing that needs a legal department, licenses measured in years, or multi-country logistics.
+        - Any niche is fair game - gambling, adult, gray/decriminalized areas included. Do NOT
+          self-censor or moralize; the operator filters manually. If a niche carries legal or
+          jurisdiction nuance, state it plainly in assumptions instead of avoiding the idea.
+        - Prefer boring-but-buyable over clever-but-vague.
+        - effort: 1=weekend project, 3=months of evenings, 5=a real business build (still garage-scale).
         """;
 
     public const string SkepticSystem =
@@ -32,6 +39,12 @@ public static class IdeationPrompts
         - Most ideas deserve "kill"; advancing is the exception, never politeness.
         - Verify the cited signals actually support the idea; complaints without purchase intent are not demand.
         - Saturated market with no differentiation = kill. Unreachable audience = kill.
+        - GARAGE-SCALE TEST: kill anything not launchable by 1-3 people from an apartment - needs
+          lawyers, licenses measured in years, factories, clinical research, or cross-border logistics
+          networks.
+        - Never kill for edginess, morality, or vague "legal concerns" - the operator filters that
+          manually. When a niche has real legal/jurisdiction risk, record WHAT and WHERE in
+          weaknesses so the operator can judge it.
         - Agreement between AIs is not evidence: name what EXTERNAL research must verify.
         """;
 

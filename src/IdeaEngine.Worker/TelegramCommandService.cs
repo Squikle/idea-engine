@@ -3,6 +3,7 @@ using System.Text;
 using IdeaEngine.Core.Notifications;
 using IdeaEngine.Core.Pipeline;
 using IdeaEngine.Core.Sources;
+using IdeaEngine.Infrastructure.Ai;
 using IdeaEngine.Infrastructure.Ideation;
 using IdeaEngine.Infrastructure.Ingestion;
 using IdeaEngine.Infrastructure.Notifications;
@@ -92,6 +93,7 @@ internal sealed class TelegramCommandService(
             await _bot!.SetMyCommands(
             [
                 new BotCommand { Command = "status", Description = "pipeline state, counts, next run" },
+                new BotCommand { Command = "best", Description = "top-valued signals, 7 days" },
                 new BotCommand { Command = "signals", Description = "latest extracted signals" },
                 new BotCommand { Command = "top", Description = "top items from the last 24h" },
                 new BotCommand { Command = "costs", Description = "AI spend, last 7 days" },
@@ -142,6 +144,8 @@ internal sealed class TelegramCommandService(
                 "status" => await BuildStatusAsync(cancellationToken),
                 "top" => await BuildTopAsync(cancellationToken),
                 "signals" => await BuildSignalsAsync(cancellationToken),
+                "best" => await BuildBestAsync(argument, cancellationToken),
+                "idea" => await BuildIdeaDetailAsync(argument, cancellationToken),
                 "costs" => await BuildCostsAsync(cancellationToken),
                 "collect" => StartCollect(argument),
                 "analyze" => StartAnalyze(),
@@ -521,7 +525,7 @@ internal sealed class TelegramCommandService(
 
         var ideas = await db.Ideas
             .OrderByDescending(i => i.Id)
-            .Take(12)
+            .Take(20)
             .ToListAsync(cancellationToken);
 
         if (ideas.Count == 0)
@@ -529,16 +533,233 @@ internal sealed class TelegramCommandService(
             return "No ideas yet — run /ideate to spin up sessions.";
         }
 
-        var builder = new StringBuilder("<b>Recent ideas</b>\n");
+        var rated = ideas
+            .Select(i => new { Idea = i, Rating = ComputeRating(i) })
+            .OrderByDescending(x => x.Idea.Status == "candidate")
+            .ThenByDescending(x => x.Rating)
+            .ThenByDescending(x => x.Idea.Id)
+            .Take(12);
+
+        var builder = new StringBuilder("<b>Ideas</b> (candidates first, by rating)\n");
+        foreach (var entry in rated)
+        {
+            var marker = entry.Idea.Status == "candidate" ? "LIVE" : "dead";
+            builder.Append("• #").Append(entry.Idea.Id)
+                .Append(" r").Append(entry.Rating.ToString("F2", CultureInfo.InvariantCulture))
+                .Append(" [").Append(marker).Append("] [").Append(entry.Idea.Category)
+                .Append("/e").Append(entry.Idea.EffortScale).Append("] ")
+                .Append(System.Net.WebUtility.HtmlEncode(entry.Idea.Title)).Append('\n');
+        }
+
+        builder.Append("\n/idea &lt;id&gt; for the full trace");
+        return builder.ToString();
+    }
+
+    private async Task<string> BuildBestAsync(string? argument, CancellationToken cancellationToken)
+    {
+        var count = 8;
+        if (argument is not null && (!int.TryParse(argument, out count) || count < 1 || count > 15))
+        {
+            return "Usage: /best [1-15]";
+        }
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
+        var since = timeProvider.GetUtcNow().AddDays(-7);
+
+        var signals = await db.Signals
+            .Where(s => s.CreatedAt >= since)
+            .OrderByDescending(s => s.Confidence)
+            .Take(150)
+            .Select(s => new
+            {
+                s.Id,
+                s.Kind,
+                s.Summary,
+                s.CommercialSentiment,
+                s.Confidence,
+                s.Novelty,
+                s.RawItem!.Url,
+                s.RawItem.Source,
+            })
+            .ToListAsync(cancellationToken);
+
+        if (signals.Count == 0)
+        {
+            return "No signals in the last 7 days — /collect then /analyze.";
+        }
+
+        // Which signals already fed ideas (evidence trace).
+        var ideas = await db.Ideas
+            .OrderByDescending(i => i.Id)
+            .Take(100)
+            .Select(i => new { i.Id, i.Status, i.EvidenceJson })
+            .ToListAsync(cancellationToken);
+
+        var signalToIdea = new Dictionary<long, (long IdeaId, string Status)>();
         foreach (var idea in ideas)
         {
-            var marker = idea.Status == "candidate" ? "LIVE" : "dead";
-            builder.Append("• [").Append(marker).Append("] [").Append(idea.Category)
-                .Append("/e").Append(idea.EffortScale).Append("] ")
-                .Append(System.Net.WebUtility.HtmlEncode(idea.Title)).Append('\n');
+            foreach (var signalId in ParseEvidence(idea.EvidenceJson))
+            {
+                signalToIdea.TryAdd(signalId, (idea.Id, idea.Status));
+            }
+        }
+
+        var top = signals
+            .Select(s => new
+            {
+                s.Id,
+                s.Kind,
+                s.Summary,
+                s.Url,
+                s.Source,
+                Value = SignalScoring.Value(s.Confidence, s.Novelty, s.CommercialSentiment),
+            })
+            .OrderByDescending(s => s.Value)
+            .Take(count)
+            .ToList();
+
+        var builder = new StringBuilder("<b>Best signals · 7 days</b>\n");
+        var rank = 1;
+        foreach (var signal in top)
+        {
+            builder.Append(rank++).Append(". v")
+                .Append(signal.Value.ToString("F2", CultureInfo.InvariantCulture))
+                .Append(" [").Append(signal.Kind).Append("] ")
+                .Append(System.Net.WebUtility.HtmlEncode(
+                    signal.Summary.Length > 100 ? signal.Summary[..99] + "…" : signal.Summary));
+
+            if (signal.Url is { Length: > 0 })
+            {
+                builder.Append(" <a href=\"").Append(signal.Url).Append("\">[").Append(signal.Source).Append("]</a>");
+            }
+
+            if (signalToIdea.TryGetValue(signal.Id, out var idea))
+            {
+                builder.Append(" → #").Append(idea.IdeaId)
+                    .Append(idea.Status == "candidate" ? " LIVE" : " dead");
+            }
+
+            builder.Append('\n');
         }
 
         return builder.ToString().TrimEnd();
+    }
+
+    private async Task<string> BuildIdeaDetailAsync(string? argument, CancellationToken cancellationToken)
+    {
+        if (!long.TryParse(argument, out var ideaId))
+        {
+            return "Usage: /idea 5 (ids are shown by /ideas)";
+        }
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
+
+        var idea = await db.Ideas.FindAsync([ideaId], cancellationToken);
+        if (idea is null)
+        {
+            return $"No idea #{ideaId}.";
+        }
+
+        var skeptic = idea.SkepticJson is null ? null : LlmJson.TryParse<SkepticReview>(idea.SkepticJson);
+        var rating = ComputeRating(idea);
+
+        var builder = new StringBuilder();
+        builder.Append("<b>#").Append(idea.Id).Append(" · ")
+            .Append(System.Net.WebUtility.HtmlEncode(idea.Title)).Append("</b>\n")
+            .Append(idea.Status == "candidate" ? "LIVE" : "dead").Append(" · ")
+            .Append(idea.Category).Append(" · effort ").Append(idea.EffortScale)
+            .Append(" · rating ").Append(rating.ToString("F2", CultureInfo.InvariantCulture)).Append("\n\n")
+            .Append(System.Net.WebUtility.HtmlEncode(idea.Thesis)).Append('\n');
+
+        AppendLine(builder, "Target", idea.TargetUser);
+        AppendLine(builder, "Monetization", idea.Monetization);
+        AppendLine(builder, "Distribution", idea.DistributionNote);
+
+        if (skeptic is not null)
+        {
+            builder.Append("\n<b>Skeptic</b> (").Append(skeptic.Verdict ?? "?")
+                .Append(", conf ").Append(skeptic.Confidence.ToString("F2", CultureInfo.InvariantCulture)).Append(")\n");
+
+            foreach (var reason in (skeptic.KillReasons ?? []).Concat(skeptic.Weaknesses ?? []).Take(3))
+            {
+                builder.Append("– ").Append(System.Net.WebUtility.HtmlEncode(reason)).Append('\n');
+            }
+
+            if (skeptic.ResearchQuestions is { Count: > 0 } questions)
+            {
+                builder.Append("<b>To research</b>\n");
+                foreach (var question in questions.Take(5))
+                {
+                    builder.Append("? ").Append(System.Net.WebUtility.HtmlEncode(question)).Append('\n');
+                }
+            }
+        }
+
+        var evidenceIds = ParseEvidence(idea.EvidenceJson).Take(6).ToList();
+        if (evidenceIds.Count > 0)
+        {
+            var cited = await db.Signals
+                .Where(s => evidenceIds.Contains(s.Id))
+                .Select(s => new { s.Id, s.Summary, s.RawItem!.Url, s.RawItem.Source })
+                .ToListAsync(cancellationToken);
+
+            builder.Append("<b>Evidence</b>\n");
+            foreach (var signal in cited)
+            {
+                builder.Append('S').Append(signal.Id).Append(' ')
+                    .Append(System.Net.WebUtility.HtmlEncode(
+                        signal.Summary.Length > 90 ? signal.Summary[..89] + "…" : signal.Summary));
+                if (signal.Url is { Length: > 0 })
+                {
+                    builder.Append(" <a href=\"").Append(signal.Url).Append("\">[").Append(signal.Source).Append("]</a>");
+                }
+
+                builder.Append('\n');
+            }
+        }
+
+        var text = builder.ToString().TrimEnd();
+        return text.Length <= 3900 ? text : text[..3900] + "…";
+    }
+
+    private static void AppendLine(StringBuilder builder, string label, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            builder.Append("<b>").Append(label).Append(":</b> ")
+                .Append(System.Net.WebUtility.HtmlEncode(value)).Append('\n');
+        }
+    }
+
+    private static double ComputeRating(IdeaEngine.Infrastructure.Persistence.Entities.IdeaEntity idea)
+    {
+        var scores = SafeDeserialize<Dictionary<string, double>>(idea.ScoresJson);
+        var skeptic = SafeDeserialize<SkepticReview>(idea.SkepticJson);
+        return IdeaScoring.Rating(scores, skeptic?.Confidence ?? 0);
+    }
+
+    private static List<long> ParseEvidence(string? evidenceJson) =>
+        SafeDeserialize<List<long>>(evidenceJson) ?? [];
+
+    /// <summary>For OUR OWN serialized jsonb columns (not LLM output - that's LlmJson's job).</summary>
+    private static T? SafeDeserialize<T>(string? json)
+        where T : class
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return null;
+        }
+
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<T>(json, LlmJson.Options);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
     }
 
     private string BuildConfig()
@@ -561,6 +782,8 @@ internal sealed class TelegramCommandService(
         """
         /status — pipeline state, counts by source/stage, recent runs
         /signals — latest extracted product-opportunity signals
+        /best [n] — top signals by value (7 days), with idea links
+        /idea 5 — full trace: thesis, skeptic verdict, evidence
         /top — best items of the last 24h
         /costs — AI spend, last 7 days
         /collect — run a full cycle now

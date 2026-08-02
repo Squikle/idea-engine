@@ -23,6 +23,9 @@ public sealed class TriageOptions
     /// <summary>Concurrent model calls within a round.</summary>
     public int Parallelism { get; set; } = 4;
 
+    /// <summary>Send a Telegram summary (with top signals) after each drain that found any.</summary>
+    public bool NotifyAfterDrain { get; set; } = true;
+
     public int PollSecondsBusy { get; set; } = 15;
 
     public int PollSecondsIdle { get; set; } = 120;

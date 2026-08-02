@@ -199,7 +199,7 @@ public sealed class IdeationService(
             StageName, options.DailyUsdCap, WorstSkepticCallUsd(options),
             WorstSkepticCallUsd(options), cancellationToken);
 
-        SkepticReviewDto? review = null;
+        SkepticReview? review = null;
         if (skepticCheck.Allowed)
         {
             var skepticCompletion = await chat.CompleteAsync(
@@ -208,7 +208,7 @@ public sealed class IdeationService(
                 options.MaxCompletionTokens, options.ReasoningEffort, cancellationToken);
             cost += RecordLedger(options.SkepticModel, skepticCompletion,
                 options.SkepticInputPricePerMTok, options.SkepticOutputPricePerMTok);
-            review = LlmJson.TryParse<SkepticReviewDto>(skepticCompletion?.Content);
+            review = LlmJson.TryParse<SkepticReview>(skepticCompletion?.Content);
         }
 
         // No skeptic verdict -> no free pass. Unvetted ideas are dismissed with a reason.
@@ -387,14 +387,6 @@ public sealed class IdeationService(
         [property: JsonPropertyName("cited_signals")] IReadOnlyList<string>? CitedSignals,
         [property: JsonPropertyName("assumptions")] IReadOnlyList<string>? Assumptions);
 
-    private sealed record SkepticReviewDto(
-        [property: JsonPropertyName("verdict")] string? Verdict,
-        [property: JsonPropertyName("kill_reasons")] IReadOnlyList<string>? KillReasons,
-        [property: JsonPropertyName("weaknesses")] IReadOnlyList<string>? Weaknesses,
-        [property: JsonPropertyName("existing_solutions")] IReadOnlyList<string>? ExistingSolutions,
-        [property: JsonPropertyName("research_questions")] IReadOnlyList<string>? ResearchQuestions,
-        [property: JsonPropertyName("scores")] Dictionary<string, double>? Scores,
-        [property: JsonPropertyName("confidence")] double Confidence);
 
     private sealed record MetaAdviceDto(
         [property: JsonPropertyName("proposals")] IReadOnlyList<MetaProposalDto>? Proposals);

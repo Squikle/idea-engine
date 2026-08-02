@@ -5,6 +5,23 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.5.0 — 2026-08-02
+
+- Startup patchnotes: on version change the bot messages the new CHANGELOG section
+  (embedded in the binary, works in Docker; last version tracked in app_state)
+- Scoring module: signal value = confidence x novelty-boost x commercial-sentiment
+  weight (wrist-strap rule numerically); idea rating = weighted skeptic scores
+  (demand/WTP/feasibility/differentiation) discounted by skeptic confidence
+- Triage drain notifications: "+N signals" with top-3 by value after every drain
+- `/best [n]`: top-valued signals of the last 7 days, tagged with ideas they fed
+- `/idea <id>`: full trace card - thesis, skeptic verdict, research questions,
+  cited evidence with links
+- `/ideas`: ids + ratings, candidates first
+- Ideation grounding: garage-scale rubric (1-3 people, apartment-buildable; no
+  lawyer-department/factory/logistics-network ideas)
+- Uncensored policy: models must not self-censor or kill on morality/legality -
+  legal nuance is recorded as information; the operator filters manually
+
 ## 0.4.0 — 2026-08-02
 
 - `/ideate [n]`: AI ideation sessions (1-10). Builder (claude-sonnet-5) proposes ONE

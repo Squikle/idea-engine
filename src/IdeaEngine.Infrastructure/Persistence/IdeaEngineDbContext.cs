@@ -16,6 +16,8 @@ public sealed class IdeaEngineDbContext(DbContextOptions<IdeaEngineDbContext> op
 
     public DbSet<IdeaEntity> Ideas => Set<IdeaEntity>();
 
+    public DbSet<AppStateEntity> AppState => Set<AppStateEntity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasPostgresExtension("vector");
@@ -90,6 +92,13 @@ public sealed class IdeaEngineDbContext(DbContextOptions<IdeaEngineDbContext> op
             idea.Property(x => x.BuilderModel).HasMaxLength(128);
             idea.Property(x => x.SkepticModel).HasMaxLength(128);
             idea.Property(x => x.CostUsd).HasPrecision(10, 6);
+        });
+
+        modelBuilder.Entity<AppStateEntity>(state =>
+        {
+            state.ToTable("app_state");
+            state.HasKey(x => x.Key);
+            state.Property(x => x.Key).HasMaxLength(64);
         });
     }
 }

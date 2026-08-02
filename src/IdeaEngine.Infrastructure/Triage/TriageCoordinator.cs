@@ -1,6 +1,12 @@
+using System.Globalization;
+using System.Net;
+using System.Text;
 using IdeaEngine.Core.Notifications;
+using IdeaEngine.Core.Pipeline;
 using IdeaEngine.Infrastructure.Ai;
 using IdeaEngine.Infrastructure.Ingestion;
+using IdeaEngine.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -20,6 +26,7 @@ public sealed class TriageCoordinator(
     IStatusBoard statusBoard,
     IngestionCoordinator ingestion,
     INotifier notifier,
+    TimeProvider timeProvider,
     IOptions<TriageOptions> triageOptions,
     ILogger<TriageCoordinator> logger) : IDisposable
 {
@@ -38,6 +45,7 @@ public sealed class TriageCoordinator(
 
         try
         {
+            var drainStartedAt = timeProvider.GetUtcNow();
             var rounds = 0;
             var analyzed = 0;
             var signals = 0;
@@ -88,11 +96,83 @@ public sealed class TriageCoordinator(
                     CancellationToken.None);
             }
 
+            if (signals > 0 && triageOptions.Value.NotifyAfterDrain)
+            {
+                await NotifyDrainAsync(drainStartedAt, analyzed, signals, cost, cancellationToken);
+            }
+
             return new TriageDrainResult(rounds, analyzed, signals, cost, queued, capped);
         }
         finally
         {
             _lock.Release();
+        }
+    }
+
+    private async Task NotifyDrainAsync(
+        DateTimeOffset since, int analyzed, int signals, decimal cost, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
+
+            var fresh = await db.Signals
+                .Where(s => s.CreatedAt >= since)
+                .Select(s => new
+                {
+                    s.Kind,
+                    s.Summary,
+                    s.CommercialSentiment,
+                    s.Confidence,
+                    s.Novelty,
+                    s.RawItem!.Url,
+                    s.RawItem.Source,
+                })
+                .ToListAsync(cancellationToken);
+
+            var top = fresh
+                .Select(s => new
+                {
+                    s.Kind,
+                    s.Summary,
+                    s.Url,
+                    s.Source,
+                    Value = SignalScoring.Value(s.Confidence, s.Novelty, s.CommercialSentiment),
+                })
+                .OrderByDescending(s => s.Value)
+                .Take(3)
+                .ToList();
+
+            var builder = new StringBuilder();
+            builder.Append("<b>Analyzed</b> ").Append(analyzed).Append(" items → +")
+                .Append(signals).Append(" signals · $")
+                .Append(cost.ToString("F3", CultureInfo.InvariantCulture)).Append('\n');
+
+            var rank = 1;
+            foreach (var signal in top)
+            {
+                builder.Append(rank++).Append(". v")
+                    .Append(signal.Value.ToString("F2", CultureInfo.InvariantCulture))
+                    .Append(" [").Append(signal.Kind).Append("] ")
+                    .Append(WebUtility.HtmlEncode(
+                        signal.Summary.Length > 90 ? signal.Summary[..89] + "…" : signal.Summary));
+
+                if (signal.Url is { Length: > 0 })
+                {
+                    builder.Append(" <a href=\"").Append(signal.Url).Append("\">[")
+                        .Append(signal.Source).Append("]</a>");
+                }
+
+                builder.Append('\n');
+            }
+
+            builder.Append("/best for the full ranking");
+            await notifier.SendAsync(builder.ToString(), cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Drain notification failed (non-fatal)");
         }
     }
 
