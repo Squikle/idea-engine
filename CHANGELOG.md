@@ -5,6 +5,16 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.13.2 — 2026-08-02
+
+- /idea card is now a chronological 🛤 Journey: 1️⃣ Skeptic gate (labeled "AI
+  opinion, no web evidence yet", verdict as "voted kill/advance") → 2️⃣ Web
+  research marked "FINAL verdict (evidence-based, overrides the gate)" -
+  answers "why does skeptic show after research" for good
+- Score categories render as an aligned monospace 2x2 grid instead of one
+  inline string
+- ⚔️ disagreement line moved to the end of the journey where it belongs
+
 ## 0.13.1 — 2026-08-02
 
 - Progress messages are now append-only step logs: every stage adds a bullet

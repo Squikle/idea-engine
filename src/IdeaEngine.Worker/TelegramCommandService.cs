@@ -920,20 +920,19 @@ internal sealed class TelegramCommandService(
             builder.Append("\n⭐ <b>Score ")
                 .Append((score.Total * 100).ToString("F0", CultureInfo.InvariantCulture))
                 .Append("%</b> — ")
-                .Append(score.Source == "research" ? "web-research scored" : "skeptic estimate (pre-research)")
-                .Append(" · evidence confidence ")
+                .Append(score.Source == "research" ? "from web research" : "skeptic estimate only")
+                .Append(" · confidence ")
                 .Append((score.Confidence * 100).ToString("F0", CultureInfo.InvariantCulture)).Append("%\n");
 
-            var labels = new Dictionary<string, string>
-            {
-                ["demand"] = "💰 demand",
-                ["pay"] = "💵 pay",
-                ["build"] = "🔨 build",
-                ["gap"] = "🏪 gap",
-            };
-            builder.AppendJoin(" · ", score.Categories.Select(c =>
-                    $"{labels.GetValueOrDefault(c.Key, c.Key)} {(c.Value * 100).ToString("F0", CultureInfo.InvariantCulture)}%"))
-                .Append('\n');
+            // Aligned 2x2 grid: monospace so percentages line up at a glance.
+            string Cell(string icon, string label, string key) =>
+                score.Categories.TryGetValue(key, out var v)
+                    ? $"{icon} {label.PadRight(6)}{((v * 100).ToString("F0", CultureInfo.InvariantCulture) + "%").PadLeft(4)}"
+                    : $"{icon} {label.PadRight(6)}  —";
+            builder.Append("<code>").Append(Cell("💰", "demand", "demand")).Append("   ")
+                .Append(Cell("💵", "pay", "pay")).Append("</code>\n");
+            builder.Append("<code>").Append(Cell("🔨", "build", "build")).Append("   ")
+                .Append(Cell("🏪", "gap", "gap")).Append("</code>\n");
         }
 
         builder.Append('\n').Append(System.Net.WebUtility.HtmlEncode(idea.Thesis)).Append('\n');
@@ -942,11 +941,29 @@ internal sealed class TelegramCommandService(
         AppendLine(builder, "Monetization", idea.Monetization);
         AppendLine(builder, "Distribution", idea.DistributionNote);
 
+        // ---- The journey: chronological stages, last one is the verdict that counts. ----
+        builder.Append("\n<b>🛤 Journey</b>\n");
+
+        if (skeptic is not null)
+        {
+            var advanced = string.Equals(skeptic.Verdict, "advance", StringComparison.OrdinalIgnoreCase);
+            builder.Append("1️⃣ 🥊 <b>Skeptic gate</b> <i>(AI opinion, no web evidence yet)</i>\n")
+                .Append(advanced ? "🟢 voted advance" : "☠️ voted kill")
+                .Append(" · ").Append((skeptic.Confidence * 100).ToString("F0", CultureInfo.InvariantCulture))
+                .Append("% sure\n");
+            foreach (var reason in (skeptic.KillReasons ?? []).Concat(skeptic.Weaknesses ?? []).Take(2))
+            {
+                builder.Append("– ").Append(System.Net.WebUtility.HtmlEncode(
+                    reason.Length > 110 ? reason[..109] + "…" : reason)).Append('\n');
+            }
+        }
+
         if (lastResearch is not null)
         {
-            builder.Append("<b>🔎 Research (final):</b> ").Append(IdeaEngine.Core.Common.Ui.Verdict(lastResearch.Verdict))
-                .Append(" · confidence ").Append((lastResearch.Confidence * 100).ToString("F0", CultureInfo.InvariantCulture))
-                .Append("% · ").Append(lastResearch.SearchesUsed).Append(" searches · $")
+            builder.Append("2️⃣ 🔎 <b>Web research — FINAL verdict</b> <i>(evidence-based, overrides the gate)</i>\n")
+                .Append(IdeaEngine.Core.Common.Ui.Verdict(lastResearch.Verdict))
+                .Append(" · ").Append((lastResearch.Confidence * 100).ToString("F0", CultureInfo.InvariantCulture))
+                .Append("% confident · ").Append(lastResearch.SearchesUsed).Append(" searches · $")
                 .Append(lastResearch.CostUsd.ToString("F3", CultureInfo.InvariantCulture)).Append('\n');
 
             var answers = researchReport?.Answers ?? [];
@@ -997,35 +1014,22 @@ internal sealed class TelegramCommandService(
                     builder.Append('\n');
                 }
             }
-        }
-        else if (idea.Status == "candidate" && idea.Category != "meta")
-        {
-            builder.Append("<i>Not researched yet — /research ").Append(idea.Id).Append("</i>\n");
-        }
 
-        if (skeptic is not null)
-        {
-            builder.Append("\n<b>🥊 Skeptic (pre-research):</b> ")
-                .Append(string.Equals(skeptic.Verdict, "advance", StringComparison.OrdinalIgnoreCase) ? "🟢 advance" : "☠️ kill")
-                .Append(" · confidence ").Append((skeptic.Confidence * 100).ToString("F0", CultureInfo.InvariantCulture))
-                .Append("%\n");
-            if (lastResearch is not null
-                && !string.Equals(skeptic.Verdict, "advance", StringComparison.OrdinalIgnoreCase)
-                && lastResearch.Verdict != "no-go")
+            var skepticKilled = skeptic is not null
+                && !string.Equals(skeptic.Verdict, "advance", StringComparison.OrdinalIgnoreCase);
+            if (skepticKilled && lastResearch.Verdict != "no-go")
             {
-                builder.Append("⚔️ <i>Disagreement: skeptic killed it, web research kept it alive — treat as unproven; decide (/kill ")
+                builder.Append("⚔️ <i>Stages disagree → status 🟨 uncertain. Your call: /kill ")
                     .Append(idea.Id).Append(" · /promote ").Append(idea.Id)
-                    .Append(") or dig again (/research ").Append(idea.Id).Append(")</i>\n");
+                    .Append(" · rerun /research ").Append(idea.Id).Append("</i>\n");
             }
-
-            foreach (var reason in (skeptic.KillReasons ?? []).Concat(skeptic.Weaknesses ?? []).Take(3))
+        }
+        else
+        {
+            builder.Append("2️⃣ 🔎 <b>Web research</b> — not run yet → /research ").Append(idea.Id).Append('\n');
+            if (skeptic?.ResearchQuestions is { Count: > 0 } questions)
             {
-                builder.Append("– ").Append(System.Net.WebUtility.HtmlEncode(reason)).Append('\n');
-            }
-
-            if (researchReport is null && skeptic.ResearchQuestions is { Count: > 0 } questions)
-            {
-                builder.Append("<b>❓ To research</b> <i>(run /research ").Append(idea.Id).Append(")</i>\n");
+                builder.Append("<b>❓ It would investigate</b>\n");
                 foreach (var question in questions.Take(5))
                 {
                     builder.Append("? ").Append(System.Net.WebUtility.HtmlEncode(question)).Append('\n');
