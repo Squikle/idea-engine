@@ -36,6 +36,12 @@
 - **Reddit Data API approval** — Reddit requires explicit approval since June 2026
   (see ADR-0004 update). Developer request ticket to be/was submitted by owner;
   until granted, Phase 1 uses the Reddit **RSS adapter** (feed position = score proxy).
+- **Etsy app approval pending** — keystring saved (correct shape) but returns
+  "not active" until Etsy reviews the app. Adapter builds the day it activates.
+- **Pinterest trial access pending** — app created; token/secret locked until
+  Pinterest approves trial. Trends adapter builds once the token exists.
+- **Parked:** Best Buy (rejects free-email signups). Optional queue: AliExpress
+  affiliate, eBay dev keys.
 - **Account setup by owner** — Telegram ✅ (bot live, chat id wired), OpenRouter ✅
   (key valid; ⚠ expires 2026-08-09, owner to remove expiry), Reddit ⏳ (approval gate),
   Brave ⏳.
