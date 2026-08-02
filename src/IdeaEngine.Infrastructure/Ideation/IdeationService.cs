@@ -32,7 +32,7 @@ public sealed class IdeationService(
     IdeaEngineDbContext db,
     OpenRouterChatClient chat,
     BudgetGuard budgetGuard,
-    IStatusBoard statusBoard,
+    IStatusTracker statusTracker,
     IAdviceJournal adviceJournal,
     TimeProvider timeProvider,
     IOptions<IdeationOptions> ideationOptions,
@@ -64,6 +64,7 @@ public sealed class IdeationService(
         decimal totalCost = 0;
         var lines = new List<string>();
         string? stoppedReason = null;
+        await statusTracker.BeginAsync(Tracks.Ideate, $"0/{count} sessions", cancellationToken);
 
         for (var session = 1; session <= count; session++)
         {
@@ -78,8 +79,8 @@ public sealed class IdeationService(
                 break;
             }
 
-            await statusBoard.UpdateAsync(
-                "Ideating", $"session {session}/{count}", null, cancellationToken);
+            await statusTracker.UpdateAsync(
+                Tracks.Ideate, $"session {session}/{count} · {advanced}🟢 {killed}☠️", cancellationToken);
             if (progress is not null)
             {
                 await progress.UpdateAsync(
@@ -106,6 +107,8 @@ public sealed class IdeationService(
             }
         }
 
+        await statusTracker.EndAsync(
+            Tracks.Ideate, $"{advanced}🟢 {killed}☠️ · ${totalCost:F2}", CancellationToken.None);
         logger.LogInformation(
             "Ideation batch: {Advanced} advanced, {Killed} killed, {Errors} errors, ${Cost:F4}",
             advanced, killed, errors, totalCost);
@@ -135,7 +138,7 @@ public sealed class IdeationService(
             return new OperatorIdeaResult(null, string.Empty, 0, check.Reason);
         }
 
-        await statusBoard.UpdateAsync("Ideating", "shaping your idea", null, cancellationToken);
+        await statusTracker.BeginAsync(Tracks.Ideate, "drop: shaping pitch…", cancellationToken);
         if (progress is not null)
         {
             await progress.UpdateAsync("Drop · shaping your pitch into a structured idea…", cancellationToken);
@@ -152,6 +155,7 @@ public sealed class IdeationService(
         if (idea is null || string.IsNullOrWhiteSpace(idea.Title))
         {
             await db.SaveChangesAsync(cancellationToken);
+            await statusTracker.EndAsync(Tracks.Ideate, "drop ⛔ unparseable", CancellationToken.None);
             return new OperatorIdeaResult(null, string.Empty, cost, "could not shape the pitch (model output unparseable)");
         }
 
@@ -195,6 +199,8 @@ public sealed class IdeationService(
         };
         db.Ideas.Add(entity);
         await db.SaveChangesAsync(cancellationToken);
+        await statusTracker.EndAsync(
+            Tracks.Ideate, $"drop #{entity.Id} {(advanced ? "🟢" : "☠️")}", CancellationToken.None);
 
         var builder = new StringBuilder();
         builder.Append(Ui.Drop).Append(" <b>#").Append(entity.Id).Append(" · ")
@@ -233,7 +239,7 @@ public sealed class IdeationService(
             return new MetaAdviceResult(string.Empty, 0, 0, check.Reason);
         }
 
-        await statusBoard.UpdateAsync("Advising", "pipeline self-review", null, cancellationToken);
+        await statusTracker.BeginAsync(Tracks.Ideate, "advisor: reviewing pipeline…", cancellationToken);
         if (progress is not null)
         {
             await progress.UpdateAsync("Advisor · gathering pipeline stats…", cancellationToken);
@@ -258,6 +264,7 @@ public sealed class IdeationService(
         if (advice?.Proposals is not { Count: > 0 } proposals)
         {
             await db.SaveChangesAsync(cancellationToken);
+            await statusTracker.EndAsync(Tracks.Ideate, "advice ⛔ unparseable", CancellationToken.None);
             return new MetaAdviceResult(string.Empty, 0, cost, "advisor returned nothing parseable");
         }
 
@@ -305,6 +312,7 @@ public sealed class IdeationService(
         builder.Append("\ncost: $").Append(cost.ToString("F4", CultureInfo.InvariantCulture));
         await db.SaveChangesAsync(cancellationToken);
         await adviceJournal.AppendAsync(journal.ToString(), cancellationToken);
+        await statusTracker.EndAsync(Tracks.Ideate, $"advice: {stored} proposals", CancellationToken.None);
 
         return new MetaAdviceResult(builder.ToString(), stored, cost, null);
     }

@@ -21,6 +21,7 @@ internal sealed class AutopilotHostedService(
     IServiceScopeFactory scopeFactory,
     ResearchCoordinator researchCoordinator,
     IProgressNotifier progressNotifier,
+    IStatusTracker statusTracker,
     INotifier notifier,
     TimeProvider timeProvider,
     TimeZoneInfo timeZone,
@@ -50,6 +51,8 @@ internal sealed class AutopilotHostedService(
             var nextDigest = Scheduling.NextOccurrence(digestTime, timeZone, now);
             var runIdeation = nextIdeation <= nextDigest;
             var nextAt = runIdeation ? nextIdeation : nextDigest;
+            await statusTracker.ScheduleAsync(Tracks.Ideate, nextIdeation, stoppingToken);
+            await statusTracker.ScheduleAsync(Tracks.DigestTrack, nextDigest, stoppingToken);
 
             logger.LogInformation(
                 "Autopilot next: {Kind} at {Local} {Zone}",
@@ -208,9 +211,11 @@ internal sealed class AutopilotHostedService(
 
     private async Task RunDigestAsync(CancellationToken cancellationToken)
     {
+        await statusTracker.BeginAsync(Tracks.DigestTrack, "building…", cancellationToken);
         using var scope = scopeFactory.CreateScope();
         var digest = scope.ServiceProvider.GetRequiredService<DigestService>();
         await notifier.SendAsync(await digest.BuildAsync(cancellationToken), cancellationToken);
+        await statusTracker.EndAsync(Tracks.DigestTrack, "sent", CancellationToken.None);
     }
 
     private static TimeOnly ParseTime(string value, TimeOnly fallback) =>

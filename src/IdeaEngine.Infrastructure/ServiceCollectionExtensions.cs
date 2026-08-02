@@ -87,6 +87,14 @@ public static class ServiceCollectionExtensions
                 }
             })
             .AddStandardResilienceHandler();
+        services
+            .AddHttpClient<Research.PageFetcher>(client =>
+            {
+                client.Timeout = TimeSpan.FromSeconds(20);
+                client.DefaultRequestHeaders.TryAddWithoutValidation(
+                    "User-Agent", "Mozilla/5.0 (compatible; idea-engine/0.11; +https://github.com/Squikle/idea-engine)");
+                client.MaxResponseContentBufferSize = 2_000_000;
+            });
         services.AddScoped<Research.ResearchService>();
         services.AddSingleton<Research.ResearchCoordinator>();
         services.AddScoped<Reporting.DigestService>();
@@ -136,7 +144,7 @@ public static class ServiceCollectionExtensions
         if (!telegram.IsConfigured)
         {
             services.AddSingleton<INotifier, NullNotifier>();
-            services.AddSingleton<IStatusBoard, NullStatusBoard>();
+            services.AddSingleton<IStatusTracker, NullStatusTracker>();
             services.AddSingleton<IProgressNotifier, NullProgressNotifier>();
             return;
         }
@@ -146,12 +154,12 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<ITelegramBotClient>(),
             telegram.AdminChatId!.Value,
             sp.GetRequiredService<ILogger<TelegramNotifier>>()));
-        services.AddSingleton<IStatusBoard>(sp => new TelegramStatusBoard(
+        services.AddSingleton<IStatusTracker>(sp => new TelegramStatusTracker(
             sp.GetRequiredService<ITelegramBotClient>(),
             telegram.AdminChatId!.Value,
             sp.GetRequiredService<TimeProvider>(),
             sp.GetRequiredService<TimeZoneInfo>(),
-            sp.GetRequiredService<ILogger<TelegramStatusBoard>>()));
+            sp.GetRequiredService<ILogger<TelegramStatusTracker>>()));
         services.AddSingleton<IProgressNotifier>(sp => new TelegramProgressNotifier(
             sp.GetRequiredService<ITelegramBotClient>(),
             telegram.AdminChatId!.Value,

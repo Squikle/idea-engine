@@ -7,7 +7,9 @@ namespace IdeaEngine.Infrastructure.Research;
 /// Single-flight gate for research runs, shared by /research, the /drop chain and the
 /// autopilot - one web-research report at a time, no double-processing.
 /// </summary>
-public sealed class ResearchCoordinator(IServiceScopeFactory scopeFactory) : IDisposable
+public sealed class ResearchCoordinator(
+    IServiceScopeFactory scopeFactory,
+    IStatusTracker statusTracker) : IDisposable
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -28,15 +30,26 @@ public sealed class ResearchCoordinator(IServiceScopeFactory scopeFactory) : IDi
 
         try
         {
+            await statusTracker.BeginAsync(Tracks.Research, $"#{ideaId} planning…", cancellationToken);
             using var scope = scopeFactory.CreateScope();
             var research = scope.ServiceProvider.GetRequiredService<ResearchService>();
-            return await research.RunAsync(ideaId, progress, cancellationToken);
+            var result = await research.RunAsync(ideaId, progress, cancellationToken);
+            await statusTracker.EndAsync(
+                Tracks.Research,
+                result.StoppedReason is { } reason
+                    ? $"#{ideaId} ⛔ {Truncate(reason, 40)}"
+                    : $"#{ideaId} {Core.Common.Ui.Verdict(result.Verdict)}",
+                CancellationToken.None);
+            return result;
         }
         finally
         {
             _gate.Release();
         }
     }
+
+    private static string Truncate(string value, int max) =>
+        value.Length <= max ? value : value[..max];
 
     public void Dispose() => _gate.Dispose();
 }

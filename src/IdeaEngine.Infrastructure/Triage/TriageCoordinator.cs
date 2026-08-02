@@ -5,7 +5,6 @@ using IdeaEngine.Core.Common;
 using IdeaEngine.Core.Notifications;
 using IdeaEngine.Core.Pipeline;
 using IdeaEngine.Infrastructure.Ai;
-using IdeaEngine.Infrastructure.Ingestion;
 using IdeaEngine.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -24,8 +23,7 @@ public sealed record TriageDrainResult(
 /// </summary>
 public sealed class TriageCoordinator(
     IServiceScopeFactory scopeFactory,
-    IStatusBoard statusBoard,
-    IngestionCoordinator ingestion,
+    IStatusTracker statusTracker,
     INotifier notifier,
     TimeProvider timeProvider,
     IOptions<TriageOptions> triageOptions,
@@ -47,6 +45,7 @@ public sealed class TriageCoordinator(
         try
         {
             var drainStartedAt = timeProvider.GetUtcNow();
+            await statusTracker.BeginAsync(Tracks.Analyze, "checking queue…", cancellationToken);
             var rounds = 0;
             var analyzed = 0;
             var signals = 0;
@@ -78,24 +77,16 @@ public sealed class TriageCoordinator(
                     break; // queue drained
                 }
 
-                if (!ingestion.IsRunning)
-                {
-                    await statusBoard.UpdateAsync(
-                        "Analyzing",
-                        $"{queued} queued · +{signals} signals",
-                        ingestion.NextCycleAt,
-                        cancellationToken);
-                }
+                await statusTracker.UpdateAsync(
+                    Tracks.Analyze, $"{queued} queued · +{signals} signals", cancellationToken);
             }
 
-            if (analyzed > 0 && !ingestion.IsRunning)
-            {
-                await statusBoard.UpdateAsync(
-                    "Idle",
-                    $"analyzed {analyzed} · +{signals} signals",
-                    ingestion.NextCycleAt,
-                    CancellationToken.None);
-            }
+            await statusTracker.EndAsync(
+                Tracks.Analyze,
+                capped
+                    ? "⛔ budget cap"
+                    : analyzed > 0 ? $"+{signals} signals from {analyzed}" : "queue empty",
+                CancellationToken.None);
 
             if (signals > 0 && triageOptions.Value.NotifyAfterDrain)
             {

@@ -12,7 +12,7 @@ namespace IdeaEngine.Infrastructure.Ingestion;
 /// </summary>
 public sealed class IngestionCoordinator(
     IServiceScopeFactory scopeFactory,
-    IStatusBoard statusBoard,
+    IStatusTracker statusTracker,
     ILogger<IngestionCoordinator> logger) : IDisposable
 {
     private readonly SemaphoreSlim _lock = new(1, 1);
@@ -35,8 +35,8 @@ public sealed class IngestionCoordinator(
 
         try
         {
-            var label = only is { } kind ? $"{kind} (manual)" : null;
-            await statusBoard.UpdateAsync("Collecting", label, null, cancellationToken);
+            var label = only is { } kind ? $"{kind} (manual)…" : "all sources…";
+            await statusTracker.BeginAsync(Tracks.Collect, label, cancellationToken);
 
             using var scope = scopeFactory.CreateScope();
             var ingestion = scope.ServiceProvider.GetRequiredService<IngestionService>();
@@ -46,8 +46,8 @@ public sealed class IngestionCoordinator(
         }
         finally
         {
-            var detail = LastReport is { } last ? $"last cycle: +{last.TotalStored} items" : null;
-            await statusBoard.UpdateAsync("Idle", detail, NextCycleAt, CancellationToken.None);
+            var result = LastReport is { } last ? $"+{last.TotalStored} items" : null;
+            await statusTracker.EndAsync(Tracks.Collect, result, CancellationToken.None);
             _lock.Release();
         }
     }

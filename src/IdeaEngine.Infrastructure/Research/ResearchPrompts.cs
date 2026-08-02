@@ -87,7 +87,8 @@ public static class ResearchPrompts
 
     public static string BuildSynthesisMessage(
         string ideaContext,
-        IReadOnlyList<(string Query, IReadOnlyList<SearchHit> Hits)> searchBlocks)
+        IReadOnlyList<(string Query, IReadOnlyList<SearchHit> Hits)> searchBlocks,
+        IReadOnlyList<(string Url, string Excerpt)>? pageExcerpts = null)
     {
         var builder = new StringBuilder(ideaContext).Append("\nWeb search results:\n");
 
@@ -105,6 +106,17 @@ public static class ResearchPrompts
             {
                 builder.Append("- ").Append(hit.Title).Append(" | ").Append(hit.Url)
                     .Append(" | ").Append(hit.Description).Append('\n');
+            }
+        }
+
+        if (pageExcerpts is { Count: > 0 })
+        {
+            builder.Append("\nFull page excerpts (read for detail - pricing, features, positioning):\n");
+            var pageIndex = 1;
+            foreach (var (url, excerpt) in pageExcerpts)
+            {
+                builder.Append("\n[P").Append(pageIndex++).Append("] ").Append(url).Append('\n')
+                    .Append(excerpt).Append('\n');
             }
         }
 

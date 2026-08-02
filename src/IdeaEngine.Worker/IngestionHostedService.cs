@@ -11,6 +11,7 @@ namespace IdeaEngine.Worker;
 /// </summary>
 internal sealed class IngestionHostedService(
     IngestionCoordinator coordinator,
+    IdeaEngine.Core.Notifications.IStatusTracker statusTracker,
     TimeProvider timeProvider,
     IOptions<IngestionOptions> options,
     ILogger<IngestionHostedService> logger) : BackgroundService
@@ -46,6 +47,8 @@ internal sealed class IngestionHostedService(
     private async Task RunScheduledAsync(TimeSpan interval, CancellationToken cancellationToken)
     {
         coordinator.NextCycleAt = timeProvider.GetUtcNow() + interval;
+        await statusTracker.ScheduleAsync(
+            IdeaEngine.Core.Notifications.Tracks.Collect, coordinator.NextCycleAt, cancellationToken);
 
         try
         {

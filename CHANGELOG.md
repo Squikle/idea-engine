@@ -5,6 +5,21 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.11.0 — 2026-08-02
+
+- DEEP RESEARCH: closure-driven loop - unanswered questions trigger follow-up
+  rounds (up to 3) that search the questions verbatim AND read the top result
+  pages (not just snippets); remaining gaps reported as "🕳 Still open", never
+  papered over. Single-pass shallow research was a scope shortcut, now gone
+- Fix: /idea card showed the skeptic's original questions as "To research" even
+  after research answered them - now shows answered count + genuinely open ones
+- Multi-track status board: collect/analyze/ideate/research/digest each keep
+  their own always-visible line (live detail when active, last result + next
+  run when idle) - concurrent processes no longer overwrite each other
+- /status: full funnel view - items new→queued→analyzed (junk/failed), signals
+  total/24h, ideas by stage with await-research count, spend vs daily+monthly
+  caps, recent runs
+
 ## 0.10.0 — 2026-08-02
 
 - Bluesky source LIVE: app-password session auth (search requires it since 2026);

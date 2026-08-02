@@ -7,31 +7,31 @@ namespace IdeaEngine.Core.Common;
 public static class Ui
 {
     // Worker state
-    public const string Live = "🟢";
-    public const string Offline = "🔴";
+    public static readonly string Live = "🟢";
+    public static readonly string Offline = "🔴";
 
     // Activities
-    public const string Collect = "📥";
-    public const string Analyze = "🧠";
-    public const string Ideate = "💡";
-    public const string Research = "🔎";
-    public const string Advise = "🧭";
-    public const string Idle = "😴";
+    public static readonly string Collect = "📥";
+    public static readonly string Analyze = "🧠";
+    public static readonly string Ideate = "💡";
+    public static readonly string Research = "🔎";
+    public static readonly string Advise = "🧭";
+    public static readonly string Idle = "😴";
 
     // Money & alerts
-    public const string Spend = "💸";
-    public const string Stopped = "⛔";
-    public const string Done = "✅";
-    public const string Warning = "🟠";
-    public const string Error = "🔴";
+    public static readonly string Spend = "💸";
+    public static readonly string Stopped = "⛔";
+    public static readonly string Done = "✅";
+    public static readonly string Warning = "🟠";
+    public static readonly string Error = "🔴";
 
     // Content
-    public const string Digest = "🗞";
-    public const string Best = "🏆";
-    public const string Signal = "🎯";
-    public const string Release = "🚀";
-    public const string Journal = "📓";
-    public const string Drop = "📦";
+    public static readonly string Digest = "🗞";
+    public static readonly string Best = "🏆";
+    public static readonly string Signal = "🎯";
+    public static readonly string Release = "🚀";
+    public static readonly string Journal = "📓";
+    public static readonly string Drop = "📦";
 
     /// <summary>Signal kind → scan-anchor.</summary>
     public static string Kind(string kind) => kind switch

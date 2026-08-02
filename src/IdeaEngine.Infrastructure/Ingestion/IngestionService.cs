@@ -23,7 +23,7 @@ public sealed class IngestionService(
     IdeaEngineDbContext db,
     IEnumerable<ISourceAdapter> adapters,
     INotifier notifier,
-    IStatusBoard statusBoard,
+    IStatusTracker statusTracker,
     TimeProvider timeProvider,
     TimeZoneInfo timeZone,
     IOptions<IngestionOptions> ingestionOptions,
@@ -84,7 +84,7 @@ public sealed class IngestionService(
         try
         {
             logger.LogInformation("→ {Source}: fetching (max {Max})…", adapter.Kind, config.MaxItemsPerSource);
-            await statusBoard.UpdateAsync("Collecting", $"{adapter.Kind}…", null, cancellationToken);
+            await statusTracker.UpdateAsync(Tracks.Collect, $"{adapter.Kind}…", cancellationToken);
 
             var items = new List<RawItem>();
             await foreach (var item in adapter.FetchAsync(
@@ -95,8 +95,8 @@ public sealed class IngestionService(
             }
 
             (stored, duplicates, highlights) = await StoreBatchAsync(items, config, cancellationToken);
-            await statusBoard.UpdateAsync(
-                "Collecting", $"{adapter.Kind}: +{stored} new", null, cancellationToken);
+            await statusTracker.UpdateAsync(
+                Tracks.Collect, $"{adapter.Kind}: +{stored} new", cancellationToken);
         }
         catch (OperationCanceledException)
         {

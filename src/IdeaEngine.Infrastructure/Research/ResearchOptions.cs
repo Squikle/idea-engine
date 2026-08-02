@@ -26,4 +26,16 @@ public sealed class ResearchOptions
     public int MaxCompletionTokens { get; set; } = 6000;
 
     public string ReasoningEffort { get; set; } = "medium";
+
+    /// <summary>
+    /// Total synthesis rounds. Rounds after the first target questions the previous round
+    /// could not answer, with fresh follow-up searches and page reads. Closure-driven.
+    /// </summary>
+    public int MaxRounds { get; set; } = 3;
+
+    /// <summary>Result pages fetched and read per follow-up question.</summary>
+    public int PagesPerQuestion { get; set; } = 2;
+
+    /// <summary>Text excerpt taken from each fetched page.</summary>
+    public int PageExcerptChars { get; set; } = 3500;
 }
