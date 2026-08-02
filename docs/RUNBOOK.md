@@ -97,6 +97,19 @@ Verify db: `docker compose ps` → `idea-engine-db (healthy)`.
    (redirect URI can be `http://localhost`).
 2. Copy the **Developer Token** → `.env`: `PRODUCTHUNT_TOKEN=...`
 
+### 9. Shopping-trend sources (each optional; adapters built once keys exist)
+
+- **Best Buy** (~5 min, instant): developer.bestbuy.com → sign up → API key.
+  `.env: BESTBUY_API_KEY`. Gives mostViewed/trending electronics (US).
+- **Etsy** (form, approval takes days): etsy.com/developers → Create App
+  (personal, describe read-only trend research). `.env: ETSY_API_KEY` (keystring).
+  Handmade/3D-print demand - best niche fit for garage-scale.
+- **eBay** (~30 min + short review): developer.ebay.com → create account →
+  production keyset. `.env: EBAY_CLIENT_ID/SECRET`. Browse API search.
+- **AliExpress affiliate** (signup + approval, days): portals.aliexpress.com →
+  affiliate account → App Console → app key/secret. `.env: ALIEXPRESS_APP_KEY/SECRET`.
+  Hot-products endpoint = order-velocity demand (the dropshipping signal).
+
 ## Operations
 
 ### Logs
