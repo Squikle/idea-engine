@@ -101,8 +101,11 @@ public sealed class JobService(IdeaEngineDbContext db, TimeProvider timeProvider
     public async Task CompleteAsync(long jobId, string? error, CancellationToken cancellationToken)
     {
         var failedFinally = error is not null;
+
+        // Only a RUNNING job may transition to done/failed here: HandleStop paths set
+        // held/failed themselves, and this must never overwrite them (the 0.24 corruption).
         await db.Jobs
-            .Where(j => j.Id == jobId)
+            .Where(j => j.Id == jobId && j.Status == "running")
             .ExecuteUpdateAsync(
                 s => s.SetProperty(j => j.Status, failedFinally ? "failed" : "done")
                     .SetProperty(j => j.LastError, error)
@@ -138,6 +141,15 @@ public sealed class JobService(IdeaEngineDbContext db, TimeProvider timeProvider
                 s => s.SetProperty(j => j.Status, "queued")
                     .SetProperty(j => j.Attempts, 0)
                     .SetProperty(j => j.LastError, (string?)null)
+                    .SetProperty(j => j.UpdatedAt, timeProvider.GetUtcNow()),
+                cancellationToken);
+
+    /// <summary>Marks a running job canceled (manual mid-flight cancel).</summary>
+    public async Task MarkCanceledAsync(long jobId, CancellationToken cancellationToken) =>
+        await db.Jobs
+            .Where(j => j.Id == jobId && j.Status == "running")
+            .ExecuteUpdateAsync(
+                s => s.SetProperty(j => j.Status, "canceled")
                     .SetProperty(j => j.UpdatedAt, timeProvider.GetUtcNow()),
                 cancellationToken);
 

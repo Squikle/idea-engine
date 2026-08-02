@@ -14,6 +14,16 @@ namespace IdeaEngine.Worker;
 /// process are re-queued (auto-recovery); the drop pipeline checkpoints the created
 /// idea id, so a restart resumes at research instead of re-shaping.
 /// </summary>
+/// <summary>Bound from configuration section <c>IdeaEngine:Jobs</c>.</summary>
+internal sealed class JobRunnerOptions
+{
+    public int DropTimeoutMinutes { get; set; } = 18;
+
+    public int ResearchTimeoutMinutes { get; set; } = 12;
+
+    public int DigTimeoutMinutes { get; set; } = 10;
+}
+
 internal sealed class JobRunnerHostedService(
     IServiceScopeFactory scopeFactory,
     IServiceProvider serviceProvider,
@@ -21,6 +31,7 @@ internal sealed class JobRunnerHostedService(
     IProgressNotifier progressNotifier,
     IStatusTracker statusTracker,
     INotifier notifier,
+    Microsoft.Extensions.Options.IOptions<JobRunnerOptions> runnerOptions,
     ILogger<JobRunnerHostedService> logger) : BackgroundService
 {
     private const int MaxAttempts = 2;
@@ -53,8 +64,43 @@ internal sealed class JobRunnerHostedService(
                     continue;
                 }
 
-                await ExecuteJobAsync(job, stoppingToken);
-                await FinishAsync(job.Id, error: null, stoppingToken);
+                var timeout = TimeSpan.FromMinutes(job.Kind switch
+                {
+                    "drop" => runnerOptions.Value.DropTimeoutMinutes,
+                    "dig" => runnerOptions.Value.DigTimeoutMinutes,
+                    _ => runnerOptions.Value.ResearchTimeoutMinutes,
+                });
+
+                using var manualCts = new CancellationTokenSource();
+                using var watchdog = new CancellationTokenSource(timeout);
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+                    stoppingToken, manualCts.Token, watchdog.Token);
+                RunningJobs.Register(job.Id, manualCts);
+                try
+                {
+                    await ExecuteJobAsync(job, linked.Token);
+                    await FinishAsync(job.Id, error: null, stoppingToken);
+                }
+                catch (OperationCanceledException) when (manualCts.IsCancellationRequested)
+                {
+                    using var scope = scopeFactory.CreateScope();
+                    await scope.ServiceProvider.GetRequiredService<JobService>()
+                        .MarkCanceledAsync(job.Id, CancellationToken.None);
+                    await notifier.SendAsync(
+                        $"🛑 Job <b>#{job.Id}</b> ({job.Kind}) canceled mid-run — tokens already spent are lost.",
+                        CancellationToken.None);
+                }
+                catch (OperationCanceledException) when (watchdog.IsCancellationRequested
+                    && !stoppingToken.IsCancellationRequested)
+                {
+                    // The whole point of the watchdog: a stalled await can no longer freeze the queue.
+                    await FinishAsync(job.Id, error: $"watchdog timeout after {timeout.TotalMinutes:F0}m", stoppingToken);
+                    await SendTimeoutCardAsync(job, timeout, stoppingToken);
+                }
+                finally
+                {
+                    RunningJobs.Unregister(job.Id);
+                }
             }
             catch (OperationCanceledException)
             {
@@ -136,6 +182,7 @@ internal sealed class JobRunnerHostedService(
         await SaveProgressIdAsync(job.Id, progress.MessageId, cancellationToken);
 
         var ideaId = payload.IdeaId;
+        var advancedDrop = true; // resumed-from-checkpoint drops were advanced by definition
 
         if (ideaId is null)
         {
@@ -153,6 +200,7 @@ internal sealed class JobRunnerHostedService(
                 }
 
                 ideaId = shaped.IdeaId;
+                advancedDrop = shaped.Advanced;
                 if (shaped.Title is { Length: > 0 } shapedTitle)
                 {
                     await progress.SetHeaderAsync(
@@ -185,6 +233,15 @@ internal sealed class JobRunnerHostedService(
 
             if (ideaId is null)
             {
+                return;
+            }
+
+            if (!advancedDrop)
+            {
+                await progress.CompleteAsync(
+                    $"☠️ skeptic killed #{ideaId} — research skipped (no money on corpses) · " +
+                    $"/research {ideaId} to override · /note {ideaId} to argue first",
+                    CancellationToken.None);
                 return;
             }
 
@@ -364,6 +421,38 @@ internal sealed class JobRunnerHostedService(
         using var scope = scopeFactory.CreateScope();
         await scope.ServiceProvider.GetRequiredService<JobService>()
             .SetProgressMessageAsync(jobId, messageId, cancellationToken);
+    }
+
+    private async Task SendTimeoutCardAsync(JobEntity job, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        var bot = serviceProvider.GetService<Telegram.Bot.ITelegramBotClient>();
+        var telegram = serviceProvider.GetService<IdeaEngine.Infrastructure.Notifications.TelegramOptions>();
+        if (bot is null || telegram is not { IsConfigured: true })
+        {
+            return;
+        }
+
+        try
+        {
+            await bot.SendMessage(
+                chatId: telegram.AdminChatId!.Value,
+                text: $"⏱ <b>Job #{job.Id}</b> ({job.Kind}) hit the {timeout.TotalMinutes:F0}-minute watchdog " +
+                    "and was stopped so the queue keeps moving. Usually a stalled network call — retry tends to work.",
+                parseMode: Telegram.Bot.Types.Enums.ParseMode.Html,
+                replyParameters: job.OriginMessageId is { } origin
+                    ? new Telegram.Bot.Types.ReplyParameters { MessageId = origin }
+                    : null,
+                replyMarkup: new Telegram.Bot.Types.ReplyMarkups.InlineKeyboardMarkup(
+                [
+                    [Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton.WithCallbackData(
+                        $"🔁 Retry job #{job.Id}", $"job|retry|{job.Id}")],
+                ]),
+                cancellationToken: cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Timeout card send failed");
+        }
     }
 
     /// <summary>Report message with one-tap decision buttons; falls back to plain notifier.</summary>

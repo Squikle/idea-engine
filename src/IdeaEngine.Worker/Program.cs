@@ -27,6 +27,7 @@ try
     builder.Services.AddHostedService<TelegramCommandService>();
     builder.Services.AddHostedService<AutopilotHostedService>();
     builder.Services.AddHostedService<RetentionHostedService>();
+    builder.Services.Configure<JobRunnerOptions>(builder.Configuration.GetSection("IdeaEngine:Jobs"));
     builder.Services.AddHostedService<JobRunnerHostedService>();
 
     // Last-resort exit hook: unhandled exceptions on non-host threads.

@@ -991,9 +991,14 @@ internal sealed class TelegramCommandService(
                 using var scope = scopeFactory.CreateScope();
                 var canceled = await scope.ServiceProvider.GetRequiredService<JobService>()
                     .CancelAsync(cancelJobId, cancellationToken);
+                if (!canceled && RunningJobs.TryCancel(cancelJobId))
+                {
+                    canceled = true;
+                }
+
                 await _bot!.AnswerCallbackQuery(
                     callback.Id,
-                    canceled ? $"✖️ job #{cancelJobId} canceled" : "not cancelable (already running/done)",
+                    canceled ? $"✖️ job #{cancelJobId} cancelling" : "not cancelable (done/unknown)",
                     cancellationToken: cancellationToken);
                 return;
             }
@@ -1180,9 +1185,14 @@ internal sealed class TelegramCommandService(
         using var scope = scopeFactory.CreateScope();
         var canceled = await scope.ServiceProvider.GetRequiredService<JobService>()
             .CancelAsync(jobId, cancellationToken);
-        return canceled
-            ? $"✖️ Job <b>#{jobId}</b> canceled."
-            : $"Job #{jobId} isn't cancelable (running, done, or unknown) — /queue for state.";
+        if (canceled)
+        {
+            return $"✖️ Job <b>#{jobId}</b> canceled (was waiting).";
+        }
+
+        return RunningJobs.TryCancel(jobId)
+            ? $"🛑 Cancelling RUNNING job <b>#{jobId}</b> — stops at the next step; spent tokens are lost."
+            : $"Job #{jobId} isn't cancelable (done or unknown) — /queue for state.";
     }
 
     private async Task<string> SendQueueAsync(CancellationToken cancellationToken)
@@ -1265,7 +1275,7 @@ internal sealed class TelegramCommandService(
         builder.Append("\n✅ ").Append(doneToday).Append(" done in 24h");
 
         var rows = new List<Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton[]>();
-        var cancelable = active.Where(j => j.Status == "queued").Concat(held).Take(6)
+        var cancelable = active.Concat(held).Take(6)
             .Select(j => Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton
                 .WithCallbackData($"✖️ #{j.Id}", $"job|cancel|{j.Id}"))
             .ToArray();

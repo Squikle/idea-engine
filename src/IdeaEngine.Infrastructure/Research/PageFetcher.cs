@@ -13,10 +13,15 @@ public sealed class PageFetcher(
 {
     public async Task<string?> FetchTextAsync(string url, int maxChars, CancellationToken cancellationToken)
     {
+        // With ResponseHeadersRead, HttpClient.Timeout only bounds the HEADERS; a tarpit
+        // server dripping body bytes hangs ReadAsStringAsync forever (the job-#37 incident).
+        // This linked 15s box bounds the whole fetch.
+        using var timebox = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timebox.CancelAfter(TimeSpan.FromSeconds(15));
         try
         {
             using var response = await httpClient.GetAsync(
-                new Uri(url), HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                new Uri(url), HttpCompletionOption.ResponseHeadersRead, timebox.Token);
             if (!response.IsSuccessStatusCode)
             {
                 return null;
@@ -29,7 +34,7 @@ public sealed class PageFetcher(
                 return null; // PDFs, images, binaries - not worth the tokens
             }
 
-            var html = await response.Content.ReadAsStringAsync(cancellationToken);
+            var html = await response.Content.ReadAsStringAsync(timebox.Token);
             if (html.Length > 400_000)
             {
                 html = html[..400_000];
@@ -37,6 +42,11 @@ public sealed class PageFetcher(
 
             var text = HtmlText.ToPlainText(html);
             return text.Length <= maxChars ? text : text[..maxChars];
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.LogDebug("Page fetch timeboxed out (15s): {Url}", url);
+            return null;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

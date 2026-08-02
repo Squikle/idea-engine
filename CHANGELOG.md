@@ -5,6 +5,22 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.25.0 — 2026-08-02
+
+- WATCHDOG: every job now has a hard runtime box (research 12m · drop 18m ·
+  dig 10m, configurable) - a single stalled network call can never freeze the
+  queue again (the job-#37 incident); timeouts fail the job with a 🔁 retry card
+- Cancel works on RUNNING jobs: /cancel N and ✖️ buttons signal the job's own
+  token - stops at the next step (spent tokens are lost, job → canceled)
+- PageFetcher tarpit fix: whole fetch (headers AND body) boxed to 15s -
+  ResponseHeadersRead + slow-drip servers could previously hang the body read
+  forever with no timeout
+- State-machine fix: done/failed transitions only apply to RUNNING jobs -
+  held/failed/canceled can no longer be silently overwritten to "done"
+- Drop chain stops wasting money on corpses: skeptic-killed drops skip web
+  research with an override hint (/research N) instead of auto-validating a
+  dismissed idea
+
 ## 0.24.1 — 2026-08-02
 
 - "model output unparseable" is dead vocabulary. Every AI failure now says WHAT

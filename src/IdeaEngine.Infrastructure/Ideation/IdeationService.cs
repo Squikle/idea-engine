@@ -21,7 +21,8 @@ public sealed record IdeationBatchResult(
 
 public sealed record MetaAdviceResult(string Html, int ProposalsCount, decimal CostUsd, string? StoppedReason);
 
-public sealed record OperatorIdeaResult(long? IdeaId, string? Title, string Html, decimal CostUsd, string? StoppedReason);
+public sealed record OperatorIdeaResult(
+    long? IdeaId, string? Title, bool Advanced, string Html, decimal CostUsd, string? StoppedReason);
 
 /// <summary>
 /// AI ideation sessions grounded in collected signals. Builder (strong model) proposes ONE
@@ -135,7 +136,7 @@ public sealed class IdeationService(
         var options = ideationOptions.Value;
         if (!options.Enabled || !chat.IsConfigured)
         {
-            return new OperatorIdeaResult(null, null, string.Empty, 0, "ideation disabled or OPENROUTER_API_KEY missing");
+            return new OperatorIdeaResult(null, null, false, string.Empty, 0, "ideation disabled or OPENROUTER_API_KEY missing");
         }
 
         var check = await budgetGuard.CheckAsync(
@@ -143,7 +144,7 @@ public sealed class IdeationService(
             WorstSessionUsd(options), cancellationToken);
         if (!check.Allowed)
         {
-            return new OperatorIdeaResult(null, null, string.Empty, 0, check.Reason);
+            return new OperatorIdeaResult(null, null, false, string.Empty, 0, check.Reason);
         }
 
         await statusTracker.BeginAsync(Tracks.Ideate, "drop: shaping pitch…", cancellationToken);
@@ -176,7 +177,7 @@ public sealed class IdeationService(
             await db.SaveChangesAsync(cancellationToken);
             var diag = LlmDiag.Describe(shaping);
             await statusTracker.EndAsync(Tracks.Ideate, "drop ⛔ model failure", CancellationToken.None);
-            return new OperatorIdeaResult(null, null, string.Empty, cost, $"shaping failed — {diag}");
+            return new OperatorIdeaResult(null, null, false, string.Empty, cost, $"shaping failed — {diag}");
         }
 
         if (progress is not null)
@@ -239,7 +240,7 @@ public sealed class IdeationService(
                 .Append('\n');
         }
 
-        return new OperatorIdeaResult(entity.Id, entity.Title, builder.ToString().TrimEnd(), cost, null);
+        return new OperatorIdeaResult(entity.Id, entity.Title, advanced, builder.ToString().TrimEnd(), cost, null);
     }
 
     public async Task<MetaAdviceResult> RunMetaSessionAsync(
