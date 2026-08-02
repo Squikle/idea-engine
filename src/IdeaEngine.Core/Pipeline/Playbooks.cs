@@ -32,6 +32,8 @@ public static class Playbooks
             "Turn routines into games: chores, cleaning, habits with progression, streaks, loot. People pay to make boring life feel like play."),
         new("gamble", "🎲", "Gamblification",
             "People bet on anything: prediction markets, mundane-event wagers, poker-like mechanics on daily life. Record legal/jurisdiction nuance as information, never self-censor."),
+        new("aiwave", "🤖", "AI capability wave",
+            "Each new model release unlocks products impossible last month. Wrap existing smart models in new form factors: agents controlling a PC (OpenClaw pattern), always-on background right-hand assistants, model X applied to niche Y. Model releases and rising AI startups are TIMING signals - being early to a capability beats being clever; collaboration with a hot new project can be the product."),
         new("datavalue", "🧲", "Data-value plays",
             "Products free or fun for users where usage itself produces a valuable byproduct: reCAPTCHA labeled datasets, Pokemon Go drove foot traffic. Design the free labor loop first, monetize the byproduct (data, attention, distribution) second."),
         new("pain", "🩹", "Pain buckets",

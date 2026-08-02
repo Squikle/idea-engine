@@ -5,6 +5,16 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.21.0 — 2026-08-02
+
+- New playbook: aiwave 🤖 - ride the AI capability wave. New model releases and
+  rising AI startups are timing signals; wrap existing smart models into new
+  form factors (PC-controlling agents a la OpenClaw, always-on background
+  right-hand assistants, model X for niche Y). Auto-rotates into ideation,
+  feeds advocate pivots; /ideate 3 aiwave to force it
+- Two matching seeds added to the local idea inbox (#13 background right-hand
+  agent, #14 new-model launch radar)
+
 ## 0.20.1 — 2026-08-02
 
 - Reddit 429 handling fixed properly: subs are shuffled every cycle (under a
