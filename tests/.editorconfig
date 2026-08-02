@@ -1,0 +1,6 @@
+# Test-project overrides (inherits the root .editorconfig).
+
+[*.cs]
+# CA1707: underscores in method names are the standard xUnit convention
+# (Method_Scenario_Expectation).
+dotnet_diagnostic.CA1707.severity = none

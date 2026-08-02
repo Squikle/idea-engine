@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/IdeaEngine.Core/IdeaEngine.Core.csproj" />
+    <Project Path="src/IdeaEngine.Infrastructure/IdeaEngine.Infrastructure.csproj" />
+    <Project Path="src/IdeaEngine.Worker/IdeaEngine.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/IdeaEngine.Tests/IdeaEngine.Tests.csproj" />
+  </Folder>
+</Solution>

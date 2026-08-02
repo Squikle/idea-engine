@@ -1,0 +1,13 @@
+**/bin/
+**/obj/
+.git/
+.idea/
+.vs/
+.vscode/
+logs/
+docs/
+tests/
+.env
+.env.example
+README.md
+TestResults/

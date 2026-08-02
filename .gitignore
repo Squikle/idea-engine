@@ -1,0 +1,27 @@
+# Secrets - never commit. Keys live in .env (docker) or dotnet user-secrets (local dev).
+.env
+*.env.local
+
+# Build output
+bin/
+obj/
+publish/
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vs/
+.idea/
+*.user
+*.suo
+.vscode/
+
+# OS
+.DS_Store
+
+# Test results / coverage
+TestResults/
+coverage/
+*.trx

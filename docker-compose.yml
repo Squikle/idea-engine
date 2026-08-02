@@ -1,0 +1,41 @@
+name: idea-engine
+
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: idea-engine-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ideaengine}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-ideaengine}
+    ports:
+      # Bound to localhost only; 5433 avoids clashing with an existing Postgres.
+      - "127.0.0.1:${DB_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ideaengine} -d ${POSTGRES_DB:-ideaengine}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # The worker. During Phase 0-1 development we run it via `dotnet run` on the host;
+  # enable this profile to run fully containerized: docker compose --profile app up -d
+  app:
+    build: .
+    image: idea-engine:local
+    container_name: idea-engine-app
+    profiles: ["app"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DOTNET_ENVIRONMENT: Production
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+
+volumes:
+  pgdata:
