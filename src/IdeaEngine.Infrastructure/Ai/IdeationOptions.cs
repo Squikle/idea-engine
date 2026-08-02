@@ -33,6 +33,12 @@ public sealed class IdeationOptions
 
     public double MinSignalConfidence { get; set; } = 0.35;
 
+    /// <summary>Random long-tail signals blended into each pool (below the top cut).</summary>
+    public int TailSampleSize { get; set; } = 20;
+
+    /// <summary>Confidence floor for tail signals.</summary>
+    public double TailMinConfidence { get; set; } = 0.30;
+
     public int MaxCompletionTokens { get; set; } = 4000;
 
     public string ReasoningEffort { get; set; } = "medium";

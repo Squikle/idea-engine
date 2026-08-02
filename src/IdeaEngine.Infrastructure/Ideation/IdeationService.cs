@@ -423,7 +423,7 @@ public sealed class IdeationService(
     private async Task<List<GroundingSignal>> LoadSignalPoolAsync(
         IdeationOptions options, CancellationToken cancellationToken)
     {
-        return await db.Signals
+        var top = await db.Signals
             .Where(s => s.Confidence >= options.MinSignalConfidence
                 && s.CommercialSentiment != "no_market")
             .OrderByDescending(s => s.Confidence + s.Novelty)
@@ -432,6 +432,28 @@ public sealed class IdeationService(
                 s.Id, s.Kind, s.CommercialSentiment, s.Confidence,
                 s.Summary, s.Audience, s.RawItem!.Community))
             .ToListAsync(cancellationToken);
+
+        // Long-tail justice: the corpus keeps growing, so decent old signals would
+        // otherwise never crack the fixed top pool. Blend in a random slice of the tail.
+        if (options.TailSampleSize > 0)
+        {
+            var tail = await db.Signals
+                .Where(s => s.Confidence >= options.TailMinConfidence
+                    && s.CommercialSentiment != "no_market")
+                .OrderByDescending(s => s.Confidence + s.Novelty)
+                .Skip(options.SignalPoolSize)
+                .Take(300)
+                .Select(s => new GroundingSignal(
+                    s.Id, s.Kind, s.CommercialSentiment, s.Confidence,
+                    s.Summary, s.Audience, s.RawItem!.Community))
+                .ToListAsync(cancellationToken);
+
+            var indices = Enumerable.Range(0, tail.Count).ToArray();
+            Random.Shared.Shuffle(indices);
+            top.AddRange(indices.Take(options.TailSampleSize).Select(i => tail[i]));
+        }
+
+        return top;
     }
 
     private async Task<string> BuildPipelineStatsAsync(CancellationToken cancellationToken)

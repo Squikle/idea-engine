@@ -11,6 +11,25 @@ public static class LlmJson
         NumberHandling = JsonNumberHandling.AllowReadingFromString,
     };
 
+    /// <summary>For OUR OWN serialized jsonb columns (strict, no fence tolerance).</summary>
+    public static T? SafeDeserialize<T>(string? json)
+        where T : class
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<T>(json, Options);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>Deserializes the first JSON object found in the content, or null.</summary>
     public static T? TryParse<T>(string? content)
         where T : class

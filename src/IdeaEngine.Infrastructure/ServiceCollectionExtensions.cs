@@ -102,6 +102,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<Research.AppealService>();
         services.AddScoped<Research.DigService>();
         services.AddScoped<Maintenance.AuditService>();
+        services.AddScoped<Maintenance.ReevalService>();
+        services.Configure<Maintenance.ReevalOptions>(configuration.GetSection("IdeaEngine:Ai:Reeval"));
         services.AddSingleton<Research.ResearchCoordinator>();
         services.AddScoped<Reporting.DigestService>();
         services.AddScoped<Jobs.JobService>();

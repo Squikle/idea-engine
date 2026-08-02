@@ -106,6 +106,7 @@ internal sealed class TelegramCommandService(
                 new BotCommand { Command = "queue", Description = "jobs: running, waiting, failed" },
                 new BotCommand { Command = "dig", Description = "excavate a niche/topic into opportunities" },
                 new BotCommand { Command = "audit", Description = "find ideas that fell through the cracks" },
+                new BotCommand { Command = "sweep", Description = "re-eval verdicts made by an older brain" },
                 new BotCommand { Command = "verify", Description = "mark idea as reviewed by you" },
                 new BotCommand { Command = "note", Description = "argue: attach a note the next research must address" },
                 new BotCommand { Command = "appeal", Description = "stronger model reviews a verdict" },
@@ -173,6 +174,7 @@ internal sealed class TelegramCommandService(
                 "research" => await StartResearchAsync(argument, cancellationToken),
                 "dig" => await StartDigAsync(argument, cancellationToken),
                 "audit" => StartAudit(),
+                "sweep" => StartSweep(),
                 "kill" => await SetIdeaStatusAsync(argument, "dismissed", cancellationToken),
                 "verify" => await VerifyIdeaAsync(argument, cancellationToken),
                 "note" => await AddNoteAsync(argument, cancellationToken),
@@ -648,6 +650,59 @@ internal sealed class TelegramCommandService(
             parseMode: ParseMode.Html,
             cancellationToken: cancellationToken);
         return string.Empty;
+    }
+
+    private string StartSweep()
+    {
+        _ = Task.Run(
+            async () =>
+            {
+                try
+                {
+                    var progress = await progressNotifier.StartAsync(
+                        "🔄 <b>Re-eval sweep</b> · verdict-improvement pass…", CancellationToken.None);
+                    using var scope = scopeFactory.CreateScope();
+                    var reeval = scope.ServiceProvider.GetRequiredService<IdeaEngine.Infrastructure.Maintenance.ReevalService>();
+                    var result = await reeval.RunAsync(progress, CancellationToken.None);
+                    if (result.StoppedReason is { } reason)
+                    {
+                        await progress.CompleteAsync($"🔄 ⛔ {reason}", CancellationToken.None);
+                        return;
+                    }
+
+                    await progress.CompleteAsync(
+                        $"🔄 ✅ done · {result.QueuedJobIds.Count} queued · {result.WorthyIds.Count} more flagged",
+                        CancellationToken.None);
+
+                    if (result.WorthyIds.Count > 0)
+                    {
+                        await _bot!.SendMessage(
+                            chatId: _adminChatId,
+                            text: result.Html,
+                            parseMode: ParseMode.Html,
+                            replyMarkup: new Telegram.Bot.Types.ReplyMarkups.InlineKeyboardMarkup(
+                            [
+                                [Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton.WithCallbackData(
+                                    $"🔎 Research remaining {result.WorthyIds.Count}",
+                                    $"rall|{string.Join(',', result.WorthyIds)}")],
+                            ]),
+                            linkPreviewOptions: Telegram.Bot.Types.LinkPreviewOptions.Disabled,
+                            cancellationToken: CancellationToken.None);
+                    }
+                    else
+                    {
+                        await notifier.SendAsync(result.Html, CancellationToken.None);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Sweep failed");
+                    await notifier.SendAsync("🔄 Sweep crashed — check logs.", CancellationToken.None);
+                }
+            },
+            CancellationToken.None);
+
+        return string.Empty; // the progress message is the reply
     }
 
     private string StartAudit()
@@ -1676,6 +1731,8 @@ internal sealed class TelegramCommandService(
         /research 20 21 24 — web-validate one or several ideas
         /dig cycling — niche excavation: saturation map + spawned candidate ideas
         /audit — leaks check: unresearched ideas, failed jobs, unreviewed verdicts
+        /sweep — verdict-improvement pass: old/under-researched ideas re-screened cheaply,
+        worthy ones re-researched ON TOP of previous findings
         /kill 5 · /promote 5 — override any verdict with YOUR decision
         /queue — jobs overview; replies to the live log of the running job
         /verify 5 — mark reviewed (default /ideas hides verified) · /bump — +$5 today

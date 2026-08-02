@@ -87,6 +87,32 @@ public sealed class ResearchService(
             ideaContext += "Operator variants to evaluate: " + string.Join(" · ", variants.Take(6)) + "\n";
         }
 
+        var previousReport = await db.ResearchReports
+            .Where(r => r.IdeaId == idea.Id)
+            .OrderByDescending(r => r.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (previousReport is not null)
+        {
+            var previousDto = LlmJson.SafeDeserialize<ResearchReportDto>(previousReport.ReportJson);
+            var stillOpen = previousDto is null ? [] : UnansweredQuestions(previousDto, []);
+            var missedUpgrades = ReasoningMilestones.MissedSince(previousReport.EngineVersion);
+
+            ideaContext += $"\nPREVIOUS RESEARCH (engine v{previousReport.EngineVersion ?? "pre-0.22"}, " +
+                $"verdict {previousReport.Verdict}, confidence {previousReport.Confidence:F2}): build ON TOP of it - " +
+                "do NOT redo settled findings; verify only what could have changed and close the gaps below.\n";
+            if (stillOpen.Count > 0)
+            {
+                ideaContext += "Still open from last time:\n"
+                    + string.Join('\n', stillOpen.Take(5).Select(q => "- " + q)) + "\n";
+            }
+
+            if (missedUpgrades.Count > 0)
+            {
+                ideaContext += "Reasoning upgrades since that verdict (apply them now):\n"
+                    + string.Join('\n', missedUpgrades.Select(m => "- " + m.Summary)) + "\n";
+            }
+        }
+
         var notes = SafeDeserialize<List<IdeaNote>>(idea.NotesJson);
         if (notes is { Count: > 0 })
         {
@@ -236,6 +262,7 @@ public sealed class ResearchService(
             QueriesJson = JsonSerializer.Serialize(
                 new { queries = blocks.Select(b => b.Query), rounds, pagesRead }, LlmJson.Options),
             SearchesUsed = searchesUsed,
+            EngineVersion = typeof(ResearchService).Assembly.GetName().Version?.ToString(3),
             SourcesCount = blocks.Sum(b => b.Hits.Count),
             Model = options.Model,
             CostUsd = cost,

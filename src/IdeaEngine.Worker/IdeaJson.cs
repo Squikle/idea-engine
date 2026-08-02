@@ -12,13 +12,9 @@ internal static class IdeaJson
 {
     /// <summary>THE score: research-backed when a report exists, skeptic estimate otherwise.</summary>
     public static IdeaScore ComputeScore(IdeaEntity idea, ResearchReportDto? research) =>
-        IdeaScoring.Compute(
-            SafeDeserialize<Dictionary<string, double>>(idea.ScoresJson),
-            SafeDeserialize<SkepticReview>(idea.SkepticJson)?.Confidence ?? 0,
-            research?.Scores,
-            research?.Confidence ?? 0);
+        IdeaScores.Compute(idea, research);
 
-    public static double ComputeRating(IdeaEntity idea) => ComputeScore(idea, null).Total;
+    public static double ComputeRating(IdeaEntity idea) => IdeaScores.Rating(idea);
 
     public static List<long> ParseEvidence(string? evidenceJson) =>
         SafeDeserialize<List<long>>(evidenceJson) ?? [];

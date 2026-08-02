@@ -43,6 +43,45 @@ internal sealed class RetentionHostedService(
         await db.SaveChangesAsync(cancellationToken);
     }
 
+    private static async Task MaybeMonthlySweepAsync(IServiceProvider services, CancellationToken cancellationToken)
+    {
+        const string key = "last_sweep";
+        var db = services.GetRequiredService<IdeaEngine.Infrastructure.Persistence.IdeaEngineDbContext>();
+        var state = await db.AppState.FindAsync([key], cancellationToken);
+        var now = DateTimeOffset.UtcNow;
+        if (state is not null
+            && DateTimeOffset.TryParse(state.Value, null, System.Globalization.DateTimeStyles.RoundtripKind, out var last)
+            && now - last < TimeSpan.FromDays(30))
+        {
+            return;
+        }
+
+        var reeval = services.GetRequiredService<IdeaEngine.Infrastructure.Maintenance.ReevalService>();
+        var notifier = services.GetRequiredService<IdeaEngine.Core.Notifications.INotifier>();
+        var result = await reeval.RunAsync(null, cancellationToken);
+        if (result.StoppedReason is null)
+        {
+            await notifier.SendAsync("🗓 monthly auto-sweep:\n" + result.Html, cancellationToken);
+        }
+
+        if (state is null)
+        {
+            db.AppState.Add(new IdeaEngine.Infrastructure.Persistence.Entities.AppStateEntity
+            {
+                Key = key,
+                Value = now.ToString("O"),
+                UpdatedAt = now,
+            });
+        }
+        else
+        {
+            state.Value = now.ToString("O");
+            state.UpdatedAt = now;
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await Task.Delay(TimeSpan.FromSeconds(45), stoppingToken);
@@ -69,6 +108,7 @@ internal sealed class RetentionHostedService(
             using var scope = scopeFactory.CreateScope();
             await scope.ServiceProvider.GetRequiredService<RetentionService>().RunAsync(cancellationToken);
             await MaybeWeeklyAuditAsync(scope.ServiceProvider, cancellationToken);
+            await MaybeMonthlySweepAsync(scope.ServiceProvider, cancellationToken);
         }
         catch (OperationCanceledException)
         {

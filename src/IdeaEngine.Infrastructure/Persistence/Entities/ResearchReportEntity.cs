@@ -24,6 +24,9 @@ public sealed class ResearchReportEntity
 
     public int SourcesCount { get; set; }
 
+    /// <summary>App version whose reasoning produced this verdict (null = pre-0.22 era).</summary>
+    public string? EngineVersion { get; set; }
+
     public required string Model { get; set; }
 
     public decimal CostUsd { get; set; }

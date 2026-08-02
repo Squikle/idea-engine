@@ -132,6 +132,7 @@ public sealed class IdeaEngineDbContext(DbContextOptions<IdeaEngineDbContext> op
             report.Property(x => x.ReportJson).HasColumnType("jsonb");
             report.Property(x => x.QueriesJson).HasColumnType("jsonb");
             report.Property(x => x.Model).HasMaxLength(128);
+            report.Property(x => x.EngineVersion).HasMaxLength(16);
             report.Property(x => x.CostUsd).HasPrecision(10, 6);
             report.HasOne(x => x.Idea)
                 .WithMany()

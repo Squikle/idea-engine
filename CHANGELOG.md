@@ -5,6 +5,24 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.22.0 — 2026-08-02
+
+- /sweep - the verdict-improvement pass (monthly auto too). Three-stage funnel,
+  cost scales with certainty:
+  0) FREE heuristics over every researched idea AND the never-researched
+     backlog: missed reasoning upgrades, open questions, kill-despite-score
+     tension, notes added after the verdict, appeal-flagged-shallow, age/origin
+  1) one batched nano call (~$0.001) screens the shortlist: rerun / targeted / leave
+  2) top 2 auto-queue as research jobs; the rest get a one-tap 🔎 button
+- Reasoning versioning: research reports now record the engine version that
+  produced them; a reasoning-milestone changelog (debate, arbitrage, page
+  reading, individual judgment…) tells exactly which upgrades a verdict missed
+- Re-research builds ON TOP: previous verdict, still-open questions, and the
+  missed upgrades are injected into context - settled findings are not redone
+- Long-tail justice in ideation: every signal pool now blends 20 random tail
+  signals (below the top-80 cut) so a growing corpus can't bury old decent
+  signals forever
+
 ## 0.21.0 — 2026-08-02
 
 - New playbook: aiwave 🤖 - ride the AI capability wave. New model releases and
