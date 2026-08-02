@@ -14,4 +14,11 @@ public sealed class HackerNewsOptions
 
     /// <summary>Top comments fetched per story.</summary>
     public int CommentsPerItem { get; set; } = 12;
+
+    /// <summary>Archaeology: high-scoring stories mined from a random historical window each run.
+    /// Old threads with rich comments are opportunity gold; dedup makes re-scans free.</summary>
+    public int BackfillPerRun { get; set; } = 15;
+
+    /// <summary>Minimum points for backfill stories.</summary>
+    public int MinBackfillPoints { get; set; } = 150;
 }

@@ -39,10 +39,24 @@ public sealed class HackerNewsAdapter(
             $"&numericFilters=points>={config.MinAskPoints},created_at_i>={askSince}",
             cancellationToken);
 
+        // Backfill archaeology: a random ~60-day window from the archive, top stories only.
+        IReadOnlyList<AlgoliaHit> backfill = [];
+        if (config.BackfillPerRun > 0)
+        {
+            var now = timeProvider.GetUtcNow();
+            var windowStart = now.AddDays(-Random.Shared.Next(240, 365 * 12)); // 8 months .. 12 years back
+            var windowEnd = windowStart.AddDays(60);
+            backfill = await SearchAsync(
+                $"search?tags=story&hitsPerPage={config.BackfillPerRun}" +
+                $"&numericFilters=points>={config.MinBackfillPoints}," +
+                $"created_at_i>={windowStart.ToUnixTimeSeconds()},created_at_i<={windowEnd.ToUnixTimeSeconds()}",
+                cancellationToken);
+        }
+
         var seenIds = new HashSet<string>(StringComparer.Ordinal);
         var yielded = 0;
 
-        foreach (var hit in frontPage.Concat(askHn))
+        foreach (var hit in frontPage.Concat(askHn).Concat(backfill))
         {
             if (yielded >= options.MaxItems)
             {
@@ -55,7 +69,8 @@ public sealed class HackerNewsAdapter(
             }
 
             var createdAt = DateTimeOffset.FromUnixTimeSeconds(hit.CreatedAtI);
-            if (options.Since is { } since && createdAt < since)
+            var isBackfill = backfill.Contains(hit);
+            if (!isBackfill && options.Since is { } since && createdAt < since)
             {
                 continue;
             }
@@ -71,7 +86,7 @@ public sealed class HackerNewsAdapter(
                 Body = NullIfEmpty(HtmlText.ToPlainText(hit.StoryText)),
                 Url = hit.Url ?? $"https://news.ycombinator.com/item?id={hit.ObjectId}",
                 Author = hit.Author,
-                Community = hit.Tags?.Contains("ask_hn") == true ? "ask_hn" : "front_page",
+                Community = isBackfill ? "archive" : hit.Tags?.Contains("ask_hn") == true ? "ask_hn" : "front_page",
                 Score = hit.Points ?? 0,
                 CommentCount = hit.NumComments ?? 0,
                 CreatedAt = createdAt,

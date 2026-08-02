@@ -20,4 +20,10 @@ public sealed class LemmyOptions
 
     /// <summary>Delay between API calls.</summary>
     public int PolitenessDelayMs { get; set; } = 400;
+
+    /// <summary>All-time top posts mined per run (archaeology; dedup makes repeats free).</summary>
+    public int BackfillPerRun { get; set; } = 12;
+
+    /// <summary>Score floor for all-time backfill posts.</summary>
+    public int MinBackfillScore { get; set; } = 300;
 }

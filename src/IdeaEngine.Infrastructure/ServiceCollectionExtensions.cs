@@ -75,6 +75,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<TriageCoordinator>();
         services.AddScoped<Ideation.IdeationService>();
         services.AddScoped<GlanceService>();
+        services.AddScoped<Ideation.RelationService>();
 
         services
             .AddHttpClient<Research.BraveSearchClient>(client =>

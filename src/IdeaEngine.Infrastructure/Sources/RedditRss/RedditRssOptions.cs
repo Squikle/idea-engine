@@ -21,4 +21,8 @@ public sealed class RedditRssOptions
 
     /// <summary>Delay between feed requests; stay far below anything rate-limit-shaped.</summary>
     public int PolitenessDelayMs { get; set; } = 2100;
+
+    /// <summary>Per cycle, this many randomly chosen subs ALSO get their all-time-top feed
+    /// mined (archaeology - old high-vote threads; dedup keeps repeats free).</summary>
+    public int BackfillSubsPerCycle { get; set; } = 3;
 }

@@ -5,7 +5,6 @@ using IdeaEngine.Infrastructure.Autopilot;
 using IdeaEngine.Infrastructure.Ideation;
 using IdeaEngine.Infrastructure.Persistence;
 using IdeaEngine.Infrastructure.Reporting;
-using IdeaEngine.Infrastructure.Research;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -19,7 +18,6 @@ namespace IdeaEngine.Worker;
 /// </summary>
 internal sealed class AutopilotHostedService(
     IServiceScopeFactory scopeFactory,
-    ResearchCoordinator researchCoordinator,
     IProgressNotifier progressNotifier,
     IStatusTracker statusTracker,
     INotifier notifier,
@@ -157,56 +155,70 @@ internal sealed class AutopilotHostedService(
 
     private async Task AutoResearchAsync(AutopilotOptions config, CancellationToken cancellationToken)
     {
-        List<(long Id, double Rating)> ranked;
+        List<(long Id, string Title, double Rating)> rated;
         using (var scope = scopeFactory.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
-            var since = timeProvider.GetUtcNow().AddHours(-24);
+            var since = timeProvider.GetUtcNow().AddHours(-48);
+            var researchedIds = db.ResearchReports.Select(r => r.IdeaId);
             var candidates = await db.Ideas
-                .Where(i => i.Status == "candidate" && i.Category != "meta" && i.CreatedAt >= since)
+                .Where(i => i.Status == "candidate" && i.Category != "meta" && !i.Verified
+                    && i.CreatedAt >= since && !researchedIds.Contains(i.Id))
                 .ToListAsync(cancellationToken);
 
-            ranked = candidates
-                .Select(i => (i.Id, Rating: IdeaJson.ComputeRating(i)))
-                .Where(x => x.Rating >= config.MinRatingForResearch)
-                .OrderByDescending(x => x.Rating)
-                .Take(config.AutoResearchTop)
-                .ToList();
+            rated = [.. candidates.Select(i => (i.Id, i.Title, IdeaJson.ComputeRating(i)))];
         }
 
-        if (ranked.Count == 0)
+        if (rated.Count == 0)
         {
-            await notifier.SendAsync(
-                $"Autopilot: no fresh candidate rated ≥ {config.MinRatingForResearch:F2} — " +
-                "not spending research money on weak ideas today.",
-                cancellationToken);
             return;
         }
 
-        foreach (var (ideaId, rating) in ranked)
+        // Individual judgment: everyone above the absolute floor gets a durable job.
+        var eligible = rated
+            .Where(x => x.Rating >= config.MinRatingForResearch)
+            .OrderByDescending(x => x.Rating)
+            .ToList();
+        var queued = eligible.Take(Math.Max(0, config.AutoResearchTop)).ToList();
+        var overflow = eligible.Skip(queued.Count).ToList();
+        var belowFloor = rated.Where(x => x.Rating < config.MinRatingForResearch).ToList();
+
+        var builder = new System.Text.StringBuilder("🔬 <b>Auto-research</b>\n");
+        if (queued.Count > 0)
         {
-            var progress = await progressNotifier.StartAsync(
-                $"Autopilot · researching #{ideaId} (r{rating:F2})…", cancellationToken);
-
-            var result = await researchCoordinator.RunAsync(ideaId, progress, wait: true, cancellationToken);
-            if (result is null)
+            using var scope = scopeFactory.CreateScope();
+            var jobs = scope.ServiceProvider.GetRequiredService<IdeaEngine.Infrastructure.Jobs.JobService>();
+            foreach (var (id, title, rating) in queued)
             {
-                continue; // unreachable with wait: true, defensive
+                var (jobId, position) = await jobs.EnqueueAsync(
+                    "research", new IdeaEngine.Infrastructure.Jobs.ResearchJobPayload(id), null, cancellationToken);
+                builder.Append("• queued job #").Append(jobId).Append(" · #").Append(id)
+                    .Append(" <i>(≈").Append((rating * 100).ToString("F0")).Append("%)</i> ")
+                    .Append(System.Net.WebUtility.HtmlEncode(IdeaEngine.Core.Common.TextClip.Clip(title, 45)))
+                    .Append('\n');
+                _ = position;
             }
-
-            if (result.StoppedReason is { } reason)
-            {
-                await progress.CompleteAsync(
-                    $"Autopilot research #{ideaId} stopped · {System.Net.WebUtility.HtmlEncode(reason)}",
-                    cancellationToken);
-                continue;
-            }
-
-            await progress.CompleteAsync(
-                $"Autopilot research #{ideaId} done · {result.Verdict?.ToUpperInvariant()} · report below",
-                cancellationToken);
-            await notifier.SendAsync(result.Html, cancellationToken);
         }
+
+        foreach (var (id, title, rating) in belowFloor)
+        {
+            builder.Append("⏭ skipped #").Append(id).Append(" <i>(≈")
+                .Append((rating * 100).ToString("F0")).Append("% &lt; ")
+                .Append((config.MinRatingForResearch * 100).ToString("F0"))
+                .Append("% floor)</i> ")
+                .Append(System.Net.WebUtility.HtmlEncode(IdeaEngine.Core.Common.TextClip.Clip(title, 40)))
+                .Append(" — /research ").Append(id).Append(" to force\n");
+        }
+
+        foreach (var (id, title, _) in overflow)
+        {
+            builder.Append("⏳ deferred #").Append(id).Append(" (daily auto-limit) ")
+                .Append(System.Net.WebUtility.HtmlEncode(IdeaEngine.Core.Common.TextClip.Clip(title, 40)))
+                .Append(" — /research ").Append(id).Append('\n');
+        }
+
+        builder.Append("<i>every idea judged individually · floor is absolute, not relative · /queue to watch</i>");
+        await notifier.SendAsync(builder.ToString(), cancellationToken);
     }
 
     private async Task RunDigestAsync(CancellationToken cancellationToken)

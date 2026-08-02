@@ -163,7 +163,7 @@ internal sealed class TelegramCommandService(
                 "top" => await BuildTopAsync(cancellationToken),
                 "signals" => await BuildSignalsAsync(cancellationToken),
                 "best" => await BuildBestAsync(argument, cancellationToken),
-                "idea" => await BuildIdeaDetailAsync(argument, cancellationToken),
+                "idea" => await SendIdeaDetailAsync(argument, cancellationToken),
                 "costs" => await BuildCostsAsync(cancellationToken),
                 "collect" => StartCollect(argument),
                 "analyze" => StartAnalyze(),
@@ -287,11 +287,22 @@ internal sealed class TelegramCommandService(
         }
 
         var budget = budgetOptions.Value;
-        builder.Append('\n').Append(IdeaEngine.Core.Common.Ui.Spend).Append(" today $")
-            .Append(spentToday.ToString("F3", CultureInfo.InvariantCulture))
-            .Append(" / ").Append(budget.GlobalDailyUsdCap.ToString("F0", CultureInfo.InvariantCulture))
-            .Append(" · month $").Append(spentMonth.ToString("F2", CultureInfo.InvariantCulture))
-            .Append(" / ").Append(budget.GlobalMonthlyUsdCap.ToString("F0", CultureInfo.InvariantCulture));
+        var bump = await scope.ServiceProvider
+            .GetRequiredService<IdeaEngine.Infrastructure.Ai.BudgetGuard>()
+            .GetTodayBumpAsync(cancellationToken);
+        var effectiveDaily = budget.GlobalDailyUsdCap + bump;
+        builder.Append('\n').Append(IdeaEngine.Core.Common.Ui.Spend).Append(" today <b>$")
+            .Append(spentToday.ToString("F2", CultureInfo.InvariantCulture))
+            .Append(" / $").Append(effectiveDaily.ToString("F0", CultureInfo.InvariantCulture)).Append("</b>");
+        if (bump > 0)
+        {
+            builder.Append(" <i>(base $").Append(budget.GlobalDailyUsdCap.ToString("F0", CultureInfo.InvariantCulture))
+                .Append(" + $").Append(bump.ToString("F0", CultureInfo.InvariantCulture)).Append(" bumped)</i>");
+        }
+
+        builder.Append(" · month $").Append(spentMonth.ToString("F2", CultureInfo.InvariantCulture))
+            .Append(" / $").Append(budget.GlobalMonthlyUsdCap.ToString("F0", CultureInfo.InvariantCulture))
+            .Append("\n<i>stage caps rise with the bump too; monthly is the hard wall</i>");
 
         return builder.ToString();
     }
@@ -649,7 +660,25 @@ internal sealed class TelegramCommandService(
                     using var scope = scopeFactory.CreateScope();
                     var audit = scope.ServiceProvider.GetRequiredService<IdeaEngine.Infrastructure.Maintenance.AuditService>();
                     var result = await audit.RunAsync(CancellationToken.None);
-                    await notifier.SendAsync(result.Html, CancellationToken.None);
+                    if (result.UnresearchedIds.Count > 0)
+                    {
+                        await _bot!.SendMessage(
+                            chatId: _adminChatId,
+                            text: result.Html,
+                            parseMode: ParseMode.Html,
+                            replyMarkup: new Telegram.Bot.Types.ReplyMarkups.InlineKeyboardMarkup(
+                            [
+                                [Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton.WithCallbackData(
+                                    $"🔎 Research all {result.UnresearchedIds.Count}",
+                                    $"rall|{string.Join(',', result.UnresearchedIds)}")],
+                            ]),
+                            linkPreviewOptions: Telegram.Bot.Types.LinkPreviewOptions.Disabled,
+                            cancellationToken: CancellationToken.None);
+                    }
+                    else
+                    {
+                        await notifier.SendAsync(result.Html, CancellationToken.None);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -780,6 +809,33 @@ internal sealed class TelegramCommandService(
             }
 
             var parts = (callback.Data ?? string.Empty).Split('|');
+            if (parts.Length >= 2 && parts[0] == "appealb" && long.TryParse(parts[1], out var appealIdeaId))
+            {
+                StartAppeal(parts[1]);
+                await _bot!.AnswerCallbackQuery(
+                    callback.Id, $"⚖️ appeal #{appealIdeaId} running…", cancellationToken: cancellationToken);
+                return;
+            }
+
+            if (parts.Length >= 2 && parts[0] == "rall")
+            {
+                var ids = parts[1].Split(',', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(t => long.TryParse(t, out var id) ? id : 0)
+                    .Where(id => id > 0)
+                    .Take(10)
+                    .ToList();
+                using var scope = scopeFactory.CreateScope();
+                var jobs = scope.ServiceProvider.GetRequiredService<JobService>();
+                foreach (var id in ids)
+                {
+                    await jobs.EnqueueAsync("research", new ResearchJobPayload(id), null, cancellationToken);
+                }
+
+                await _bot!.AnswerCallbackQuery(
+                    callback.Id, $"🔎 queued {ids.Count} research job(s) — /queue", cancellationToken: cancellationToken);
+                return;
+            }
+
             if (parts.Length >= 2 && parts[0] is "verify" or "rr" or "promoteb" or "killb"
                 && long.TryParse(parts[1], out var actIdeaId))
             {
@@ -938,11 +994,9 @@ internal sealed class TelegramCommandService(
             var id = ('#' + entry.Idea.Id.ToString(CultureInfo.InvariantCulture)).PadRight(4);
             var pct = ((entry.Score.Total * 100).ToString("F0", CultureInfo.InvariantCulture) + "%")
                 .PadLeft(4) + (entry.Score.Source == "research" ? "⭐" : "≈");
-            var title = entry.Idea.Title.Length > 56 ? entry.Idea.Title[..55] + "…" : entry.Idea.Title;
-
             builder.Append(IdeaEngine.Core.Common.Ui.IdeaStatus(entry.Idea.Status))
                 .Append(" <code>").Append(id).Append(pct).Append("</code> ")
-                .Append(System.Net.WebUtility.HtmlEncode(title));
+                .Append(System.Net.WebUtility.HtmlEncode(entry.Idea.Title));
             if (entry.Idea.Origin == "operator")
             {
                 builder.Append(" — <i>yours</i>");
@@ -951,7 +1005,7 @@ internal sealed class TelegramCommandService(
             builder.Append('\n');
         }
 
-        builder.Append("\n/idea 5 for a trace card");
+        builder.Append("\n<i>with any id N:</i> /idea N · /research N · /note N text · /verify N · /kill N · /promote N · /appeal N");
 
         var filterRow = IdeaFilters
             .Select(f => InlineKeyboardButton.WithCallbackData(
@@ -1090,6 +1144,13 @@ internal sealed class TelegramCommandService(
                 return payload is null ? string.Empty : $"idea #{payload.IdeaId}";
             }
 
+            if (job.Kind == "dig")
+            {
+                var payload = System.Text.Json.JsonSerializer.Deserialize<DigJobPayload>(
+                    job.PayloadJson, LlmJson.Options);
+                return payload is null ? string.Empty : $"\u201c{IdeaEngine.Core.Common.TextClip.Clip(payload.Topic, 30)}\u201d";
+            }
+
             if (job.Kind == "drop")
             {
                 var payload = System.Text.Json.JsonSerializer.Deserialize<DropJobPayload>(
@@ -1204,7 +1265,10 @@ internal sealed class TelegramCommandService(
         var total = await scope.ServiceProvider
             .GetRequiredService<IdeaEngine.Infrastructure.Ai.BudgetGuard>()
             .BumpTodayAsync(5m, cancellationToken);
-        return $"💸 Daily caps bumped <b>+$5</b> for today (total bump ${total:F0}). Monthly ceiling unchanged.";
+        var effective = budgetOptions.Value.GlobalDailyUsdCap + total;
+        return $"💸 <b>+$5 for today.</b> Global daily cap now <b>${effective:F0}</b> " +
+            $"(${budgetOptions.Value.GlobalDailyUsdCap:F0} base + ${total:F0} bumped); every stage cap rises by the same +${total:F0}. " +
+            "Monthly ceiling unchanged. Failed jobs: /queue → 🔁.";
     }
 
     private async Task<string> SetIdeaStatusAsync(
@@ -1328,6 +1392,36 @@ internal sealed class TelegramCommandService(
         }
 
         return builder.ToString().TrimEnd();
+    }
+
+    private async Task<string> SendIdeaDetailAsync(string? argument, CancellationToken cancellationToken)
+    {
+        var text = await BuildIdeaDetailAsync(argument, cancellationToken);
+        if (!long.TryParse(argument, out var kbIdeaId) || text.StartsWith("No idea", StringComparison.Ordinal)
+            || text.StartsWith("Usage", StringComparison.Ordinal))
+        {
+            return text;
+        }
+
+        await _bot!.SendMessage(
+            chatId: _adminChatId,
+            text: text,
+            parseMode: ParseMode.Html,
+            replyMarkup: new Telegram.Bot.Types.ReplyMarkups.InlineKeyboardMarkup(
+            [
+                [
+                    Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton.WithCallbackData("✅ Verify", $"verify|{kbIdeaId}"),
+                    Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton.WithCallbackData("🔎 Research", $"rr|{kbIdeaId}"),
+                    Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton.WithCallbackData("⚖️ Appeal", $"appealb|{kbIdeaId}"),
+                ],
+                [
+                    Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton.WithCallbackData("🔥 Promote", $"promoteb|{kbIdeaId}"),
+                    Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton.WithCallbackData("☠️ Kill", $"killb|{kbIdeaId}"),
+                ],
+            ]),
+            linkPreviewOptions: Telegram.Bot.Types.LinkPreviewOptions.Disabled,
+            cancellationToken: cancellationToken);
+        return string.Empty;
     }
 
     private async Task<string> BuildIdeaDetailAsync(string? argument, CancellationToken cancellationToken)
@@ -1496,7 +1590,7 @@ internal sealed class TelegramCommandService(
                 builder.Append("<b>❓ It would investigate</b>\n");
                 foreach (var question in questions.Take(5))
                 {
-                    builder.Append("? ").Append(System.Net.WebUtility.HtmlEncode(question)).Append('\n');
+                    builder.Append("🔹 ").Append(System.Net.WebUtility.HtmlEncode(question)).Append('\n');
                 }
             }
         }
@@ -1523,6 +1617,19 @@ internal sealed class TelegramCommandService(
                 builder.Append('\n');
             }
         }
+
+        var relations = IdeaJson.SafeDeserialize<List<IdeaEngine.Infrastructure.Ideation.IdeaRelation>>(idea.RelatedJson);
+        if (relations is { Count: > 0 })
+        {
+            builder.Append("\n<b>🧬 Related</b>\n");
+            foreach (var relation in relations.Take(5))
+            {
+                builder.Append("• #").Append(relation.Id).Append(" <i>(").Append(relation.Kind)
+                    .Append(")</i> — /idea ").Append(relation.Id).Append('\n');
+            }
+        }
+
+        builder.Append("\n<i>argue: /note ").Append(idea.Id).Append(" your point · then 🔎 re-research</i>");
 
         var text = builder.ToString().TrimEnd();
         return text.Length <= 3900 ? text : text[..3900] + "…";

@@ -31,6 +31,11 @@ public sealed class RedditRssAdapter(
         var config = adapterOptions.Value;
         var yielded = 0;
 
+        var backfillSubs = config.Subreddits
+            .OrderBy(_ => Random.Shared.Next())
+            .Take(Math.Max(0, config.BackfillSubsPerCycle))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         foreach (var subreddit in config.Subreddits)
         {
             if (yielded >= options.MaxItems)
@@ -39,7 +44,12 @@ public sealed class RedditRssAdapter(
             }
 
             await Task.Delay(config.PolitenessDelayMs, cancellationToken);
-            var entries = await FetchFeedAsync(subreddit, cancellationToken);
+            var entries = await FetchFeedAsync($"r/{subreddit}/hot.rss", subreddit, cancellationToken);
+            if (backfillSubs.Contains(subreddit))
+            {
+                await Task.Delay(config.PolitenessDelayMs, cancellationToken);
+                entries = [.. entries, .. await FetchFeedAsync($"r/{subreddit}/top.rss?t=all", subreddit, cancellationToken)];
+            }
 
             var position = 0;
             foreach (var entry in entries.Take(config.PerSubredditLimit))
@@ -64,12 +74,12 @@ public sealed class RedditRssAdapter(
     }
 
     private async Task<IReadOnlyList<XElement>> FetchFeedAsync(
-        string subreddit, CancellationToken cancellationToken)
+        string path, string subreddit, CancellationToken cancellationToken)
     {
         try
         {
             var xml = await httpClient.GetStringAsync(
-                new Uri($"r/{subreddit}/hot.rss", UriKind.Relative), cancellationToken);
+                new Uri(path, UriKind.Relative), cancellationToken);
             var document = XDocument.Parse(xml);
             return [.. document.Root?.Elements(Atom + "entry") ?? []];
         }
@@ -98,10 +108,9 @@ public sealed class RedditRssAdapter(
             ? parsed
             : timeProvider.GetUtcNow();
 
-        if (since is { } cutoff && published < cutoff)
-        {
-            return null;
-        }
+        // No Since cutoff: archaeology deliberately surfaces old high-value threads;
+        // dedup by external id keeps repeats free.
+        _ = since;
 
         var body = HtmlText.ToPlainText(entry.Element(Atom + "content")?.Value);
         // Reddit feed content wraps everything in "submitted by ... [link] [comments]" chrome.

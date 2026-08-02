@@ -12,7 +12,7 @@ using Microsoft.Extensions.Options;
 
 namespace IdeaEngine.Infrastructure.Maintenance;
 
-public sealed record AuditResult(string Html, string? StoppedReason);
+public sealed record AuditResult(string Html, string? StoppedReason, IReadOnlyList<long> UnresearchedIds);
 
 /// <summary>
 /// Pipeline integrity sweep: finds ideas that fell through the cracks (dropped but never
@@ -131,7 +131,7 @@ public sealed class AuditService(
             "Audit: {NeverResearched} unresearched, {Failed} failed jobs, {Unreviewed} unreviewed",
             neverResearched.Count, failedJobs.Count, unreviewed);
 
-        return new AuditResult(builder.ToString().TrimEnd(), null);
+        return new AuditResult(builder.ToString().TrimEnd(), null, [.. neverResearched.Take(8).Select(i => i.Id)]);
     }
 
     private async Task<string?> ReflectAsync(string stats, CancellationToken cancellationToken)

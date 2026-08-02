@@ -36,6 +36,9 @@ public sealed class IdeaEntity
     /// <summary>Operator notes/counter-arguments, jsonb array of {text, at}.</summary>
     public string? NotesJson { get; set; }
 
+    /// <summary>Links to duplicate/variant/related ideas, jsonb [{id,kind}].</summary>
+    public string? RelatedJson { get; set; }
+
     /// <summary>Latest appeal verdict (assessment/overturn/justification), jsonb.</summary>
     public string? AppealJson { get; set; }
 

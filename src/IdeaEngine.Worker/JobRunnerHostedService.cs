@@ -146,7 +146,30 @@ internal sealed class JobRunnerHostedService(
                 }
 
                 ideaId = shaped.IdeaId;
+                if (shaped.Title is { Length: > 0 } shapedTitle)
+                {
+                    await progress.SetHeaderAsync(
+                        $"📦 <b>Drop #{ideaId} · {System.Net.WebUtility.HtmlEncode(IdeaEngine.Core.Common.TextClip.Clip(shapedTitle, 60))}</b>",
+                        cancellationToken);
+                }
+
                 await notifier.SendAsync(shaped.Html, cancellationToken);
+
+                // Semantic memory: link duplicates/variants so re-drops enrich, not fragment.
+                if (ideaId is { } newId)
+                {
+                    var relations = await scope.ServiceProvider
+                        .GetRequiredService<IdeaEngine.Infrastructure.Ideation.RelationService>()
+                        .LinkAsync(newId, cancellationToken);
+                    if (relations.Relations.Count > 0)
+                    {
+                        await notifier.SendAsync(
+                            "🧬 <b>Related ideas found</b>\n" + string.Join('\n', relations.Relations.Select(r =>
+                                $"• #{r.Id} <i>({r.Kind})</i> {System.Net.WebUtility.HtmlEncode(IdeaEngine.Core.Common.TextClip.Clip(r.Title, 60))} — /idea {r.Id}")) +
+                            "\n<i>linked on both sides; verdicts of relatives are context, not law</i>",
+                            cancellationToken);
+                    }
+                }
             }
             finally
             {
@@ -210,7 +233,40 @@ internal sealed class JobRunnerHostedService(
 
         await progress.CompleteAsync(
             $"⛏ ✅ done · {result.SpawnedIdeas} idea(s) spawned · map below", CancellationToken.None);
-        await notifier.SendAsync(result.Html, cancellationToken);
+        await SendWithResearchAllAsync(result.Html, result.SpawnedIds, cancellationToken);
+    }
+
+    /// <summary>Send html with a one-tap "research all" button when there are spawned ids.</summary>
+    private async Task SendWithResearchAllAsync(
+        string html, IReadOnlyList<long> ideaIds, CancellationToken cancellationToken)
+    {
+        var bot = serviceProvider.GetService<Telegram.Bot.ITelegramBotClient>();
+        var telegram = serviceProvider.GetService<IdeaEngine.Infrastructure.Notifications.TelegramOptions>();
+        if (bot is null || telegram is not { IsConfigured: true } || ideaIds.Count == 0)
+        {
+            await notifier.SendAsync(html, cancellationToken);
+            return;
+        }
+
+        try
+        {
+            await bot.SendMessage(
+                chatId: telegram.AdminChatId!.Value,
+                text: html,
+                parseMode: Telegram.Bot.Types.Enums.ParseMode.Html,
+                replyMarkup: new Telegram.Bot.Types.ReplyMarkups.InlineKeyboardMarkup(
+                [
+                    [Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton.WithCallbackData(
+                        $"🔎 Research all {ideaIds.Count}", $"rall|{string.Join(',', ideaIds)}")],
+                ]),
+                linkPreviewOptions: Telegram.Bot.Types.LinkPreviewOptions.Disabled,
+                cancellationToken: cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "research-all keyboard send failed; plain fallback");
+            await notifier.SendAsync(html, cancellationToken);
+        }
     }
 
     private async Task ExecuteResearchAsync(JobEntity job, CancellationToken cancellationToken)
@@ -218,8 +274,18 @@ internal sealed class JobRunnerHostedService(
         var payload = JsonSerializer.Deserialize<ResearchJobPayload>(job.PayloadJson, LlmJson.Options)
             ?? throw new InvalidOperationException("research payload unreadable");
 
+        string? ideaTitle;
+        using (var titleScope = scopeFactory.CreateScope())
+        {
+            var db = titleScope.ServiceProvider.GetRequiredService<IdeaEngine.Infrastructure.Persistence.IdeaEngineDbContext>();
+            ideaTitle = (await db.Ideas.FindAsync([payload.IdeaId], cancellationToken))?.Title;
+        }
+
         var progress = await progressNotifier.StartAsync(
-            $"🔎 Research #{payload.IdeaId} (job #{job.Id}) · preparing…", job.OriginMessageId, cancellationToken);
+            ideaTitle is { Length: > 0 }
+                ? $"🔎 <b>Research #{payload.IdeaId} · {System.Net.WebUtility.HtmlEncode(IdeaEngine.Core.Common.TextClip.Clip(ideaTitle, 60))}</b>"
+                : $"🔎 Research #{payload.IdeaId} (job #{job.Id})",
+            job.OriginMessageId, cancellationToken);
         await SaveProgressIdAsync(job.Id, progress.MessageId, cancellationToken);
 
         var result = await researchCoordinator.RunAsync(payload.IdeaId, progress, wait: true, cancellationToken);

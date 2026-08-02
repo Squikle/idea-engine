@@ -21,6 +21,9 @@ public interface IProgressHandle
     /// <summary>Edit the message in place (throttled; identical text skipped).</summary>
     Task UpdateAsync(string text, CancellationToken cancellationToken);
 
+    /// <summary>Replace the header line (e.g. once the idea title becomes known).</summary>
+    Task SetHeaderAsync(string text, CancellationToken cancellationToken);
+
     /// <summary>Final edit; always applied regardless of throttling.</summary>
     Task CompleteAsync(string text, CancellationToken cancellationToken);
 }

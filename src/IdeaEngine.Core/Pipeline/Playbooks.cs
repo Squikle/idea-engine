@@ -32,6 +32,8 @@ public static class Playbooks
             "Turn routines into games: chores, cleaning, habits with progression, streaks, loot. People pay to make boring life feel like play."),
         new("gamble", "🎲", "Gamblification",
             "People bet on anything: prediction markets, mundane-event wagers, poker-like mechanics on daily life. Record legal/jurisdiction nuance as information, never self-censor."),
+        new("datavalue", "🧲", "Data-value plays",
+            "Products free or fun for users where usage itself produces a valuable byproduct: reCAPTCHA labeled datasets, Pokemon Go drove foot traffic. Design the free labor loop first, monetize the byproduct (data, attention, distribution) second."),
         new("pain", "🩹", "Pain buckets",
             "Chronic personal pains: procrastination, ADHD focus, waking up, toxic teammates. Cross-reference known techniques (pomodoro, meditation) with what sufferers say still fails - build for the unsolved residue."),
     ];

@@ -15,11 +15,13 @@ public sealed class AutopilotOptions
     /// <summary>Builder-vs-skeptic sessions per scheduled run.</summary>
     public int SessionsPerDay { get; set; } = 3;
 
-    /// <summary>Best fresh candidates auto-researched after the scheduled ideation.</summary>
-    public int AutoResearchTop { get; set; } = 1;
+    /// <summary>Max research jobs auto-queued per scheduled run. Every candidate above the
+    /// floor gets its own job - opportunities are judged individually, never as a tournament.</summary>
+    public int AutoResearchTop { get; set; } = 8;
 
-    /// <summary>Candidates below this rating are not worth web-research money.</summary>
-    public double MinRatingForResearch { get; set; } = 0.45;
+    /// <summary>Absolute floor: candidates below this estimate are listed as skipped (with a
+    /// force hint), not silently dropped. Deliberately low - missing gold costs more than $0.25.</summary>
+    public double MinRatingForResearch { get; set; } = 0.30;
 
     /// <summary>Daily digest, local time (default 21:00 Ontario).</summary>
     public string DigestTime { get; set; } = "21:00";

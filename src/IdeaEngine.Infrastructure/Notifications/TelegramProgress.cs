@@ -75,6 +75,17 @@ internal sealed class TelegramProgressHandle : IProgressHandle
         _lines.Add(headerText);
     }
 
+    /// <summary>Replaces the header line; used once the subject (idea title) is known.</summary>
+    public Task SetHeaderAsync(string text, CancellationToken cancellationToken)
+    {
+        lock (_lines)
+        {
+            _lines[0] = text;
+        }
+
+        return EditAsync(force: true, cancellationToken);
+    }
+
     /// <summary>Appends a step to the log (never replaces) - the message reads as history.</summary>
     public Task UpdateAsync(string text, CancellationToken cancellationToken)
     {
@@ -184,6 +195,8 @@ internal sealed class NullProgressHandle : IProgressHandle
     public int? MessageId => null;
 
     public Task UpdateAsync(string text, CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task SetHeaderAsync(string text, CancellationToken cancellationToken) => Task.CompletedTask;
 
     public Task CompleteAsync(string text, CancellationToken cancellationToken) => Task.CompletedTask;
 }

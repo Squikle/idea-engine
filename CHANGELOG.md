@@ -5,6 +5,34 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.20.0 — 2026-08-02
+
+- ARCHAEOLOGY MODE: collection now mines the archives, not just fresh posts -
+  HN pulls top stories from a random historical window each cycle (8mo-12yr
+  back, 150+ pts), Reddit rotates 3 subs/cycle through all-time-top feeds,
+  Lemmy samples random all-time-top pages (300+ score). Old threads with dense
+  comments are opportunity gold; dedup makes re-scans free
+- NO MORE TOURNAMENT: auto-research queues EVERY fresh candidate above an
+  absolute 30% floor as its own durable job (up to 8/day) - relative ranking
+  can never bury an idea; skipped/deferred ones are listed with reasons and a
+  force hint
+- Idea relations (semantic memory): every /drop gets a nano-model comparison
+  against recent ideas; duplicate/variant/related links stored on BOTH sides,
+  shown as 🧬 Related on cards - re-drops enrich instead of fragment
+- Links never truncated: URLs render as short host-labeled hyperlinks
+  everywhere (answers now carry [source] links); clipping can't cut a link
+- Cleaner logs: no more "Research #N ·" prefix spam (header owns identity,
+  which now shows the IDEA TITLE for research and drop jobs); step markers
+  (1/4 plan → 2/4 search → 3/4 advocate → 4/4 judge)
+- More keyboards: /idea card has Verify/Research/Appeal/Promote/Kill buttons;
+  dig maps and /audit get "🔎 Research all N"; /ideas and cards carry action
+  footers (all commands usable with the id)
+- /status shows the effective daily cap incl. today's bump (base + bumped);
+  /bump reply spells out new totals
+- /ideas prints full titles (no mid-word wraps); 🔹 bullets replace "?" walls
+- New playbook: datavalue 🧲 (captcha/PokemonGo pattern - free product,
+  valuable byproduct)
+
 ## 0.19.0 — 2026-08-02
 
 - /dig <topic> - niche excavation as a durable job: plans 4-6 sub-branches

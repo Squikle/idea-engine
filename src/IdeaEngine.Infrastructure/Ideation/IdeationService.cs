@@ -21,7 +21,7 @@ public sealed record IdeationBatchResult(
 
 public sealed record MetaAdviceResult(string Html, int ProposalsCount, decimal CostUsd, string? StoppedReason);
 
-public sealed record OperatorIdeaResult(long? IdeaId, string Html, decimal CostUsd, string? StoppedReason);
+public sealed record OperatorIdeaResult(long? IdeaId, string? Title, string Html, decimal CostUsd, string? StoppedReason);
 
 /// <summary>
 /// AI ideation sessions grounded in collected signals. Builder (strong model) proposes ONE
@@ -135,7 +135,7 @@ public sealed class IdeationService(
         var options = ideationOptions.Value;
         if (!options.Enabled || !chat.IsConfigured)
         {
-            return new OperatorIdeaResult(null, string.Empty, 0, "ideation disabled or OPENROUTER_API_KEY missing");
+            return new OperatorIdeaResult(null, null, string.Empty, 0, "ideation disabled or OPENROUTER_API_KEY missing");
         }
 
         var check = await budgetGuard.CheckAsync(
@@ -143,7 +143,7 @@ public sealed class IdeationService(
             WorstSessionUsd(options), cancellationToken);
         if (!check.Allowed)
         {
-            return new OperatorIdeaResult(null, string.Empty, 0, check.Reason);
+            return new OperatorIdeaResult(null, null, string.Empty, 0, check.Reason);
         }
 
         await statusTracker.BeginAsync(Tracks.Ideate, "drop: shaping pitch…", cancellationToken);
@@ -164,7 +164,7 @@ public sealed class IdeationService(
         {
             await db.SaveChangesAsync(cancellationToken);
             await statusTracker.EndAsync(Tracks.Ideate, "drop ⛔ unparseable", CancellationToken.None);
-            return new OperatorIdeaResult(null, string.Empty, cost, "could not shape the pitch (model output unparseable)");
+            return new OperatorIdeaResult(null, null, string.Empty, cost, "could not shape the pitch (model output unparseable)");
         }
 
         if (progress is not null)
@@ -227,7 +227,7 @@ public sealed class IdeationService(
                 .Append('\n');
         }
 
-        return new OperatorIdeaResult(entity.Id, builder.ToString().TrimEnd(), cost, null);
+        return new OperatorIdeaResult(entity.Id, entity.Title, builder.ToString().TrimEnd(), cost, null);
     }
 
     public async Task<MetaAdviceResult> RunMetaSessionAsync(
@@ -460,7 +460,7 @@ public sealed class IdeationService(
             affiliate hot products, Google Trends (gated alpha).
             Parked for ToS: TikTok, Instagram, FB Marketplace, X (paywalled).
             Policies: official APIs/feeds only, no AI training on Reddit data, no user profiling.
-            Operator: solo dev (C#), 3D printing access, Ukraine+Canada distribution focus.
+            Operator: solo dev (C#), 3D printing access, interested in a wide range of ideas and is capable of developing expertise and required skills if it's worth it, Ukraine+Canada+US+EU distribution focus.
 
             Live stats:
             """);

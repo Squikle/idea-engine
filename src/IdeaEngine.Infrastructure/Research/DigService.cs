@@ -35,7 +35,7 @@ public sealed class DigOptions
     public int MaxCompletionTokens { get; set; } = 5000;
 }
 
-public sealed record DigRunResult(string Html, int SpawnedIdeas, decimal CostUsd, string? StoppedReason);
+public sealed record DigRunResult(string Html, int SpawnedIdeas, decimal CostUsd, string? StoppedReason, IReadOnlyList<long> SpawnedIds);
 
 /// <summary>
 /// Niche excavation: topic → sub-niche tree → web evidence per branch → saturation map →
@@ -87,12 +87,12 @@ public sealed class DigService(
         var options = digOptions.Value;
         if (!options.Enabled || !chat.IsConfigured)
         {
-            return new DigRunResult(string.Empty, 0, 0, "dig disabled or OPENROUTER_API_KEY missing");
+            return new DigRunResult(string.Empty, 0, 0, "dig disabled or OPENROUTER_API_KEY missing", []);
         }
 
         if (!brave.IsConfigured)
         {
-            return new DigRunResult(string.Empty, 0, 0, "BRAVE_API_KEY missing in .env");
+            return new DigRunResult(string.Empty, 0, 0, "BRAVE_API_KEY missing in .env", []);
         }
 
         var worstCall = (25_000m * options.InputPricePerMTok
@@ -101,7 +101,7 @@ public sealed class DigService(
             StageName, options.DailyUsdCap, worstCall, worstCall * 1.5m, cancellationToken);
         if (!check.Allowed)
         {
-            return new DigRunResult(string.Empty, 0, 0, check.Reason);
+            return new DigRunResult(string.Empty, 0, 0, check.Reason, []);
         }
 
         decimal cost = 0;
@@ -123,7 +123,7 @@ public sealed class DigService(
         if (branches.Count == 0)
         {
             await db.SaveChangesAsync(cancellationToken);
-            return new DigRunResult(string.Empty, 0, cost, "branch planning returned nothing parseable");
+            return new DigRunResult(string.Empty, 0, cost, "branch planning returned nothing parseable", []);
         }
 
         // 2. Evidence per branch.
@@ -173,7 +173,7 @@ public sealed class DigService(
         if (map is null)
         {
             await db.SaveChangesAsync(cancellationToken);
-            return new DigRunResult(string.Empty, 0, cost, "opportunity mapping returned unparseable output twice");
+            return new DigRunResult(string.Empty, 0, cost, "opportunity mapping returned unparseable output twice", []);
         }
 
         // 4. Spawn candidate ideas.
@@ -211,7 +211,9 @@ public sealed class DigService(
             "Dig '{Topic}': {Branches} branches, {Spawned} ideas spawned, ${Cost:F4}",
             topic, branches.Count, spawned.Count, cost);
 
-        return new DigRunResult(FormatReport(topic, map, spawned, cost, branches.Count), spawned.Count, cost, null);
+        return new DigRunResult(
+            FormatReport(topic, map, spawned, cost, branches.Count), spawned.Count, cost, null,
+            [.. spawned.Select(s => s.Id)]);
     }
 
     private static string FormatReport(

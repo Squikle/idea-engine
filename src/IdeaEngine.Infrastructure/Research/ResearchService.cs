@@ -103,7 +103,7 @@ public sealed class ResearchService(
         // Round 1 queries: planned by the model from the idea + open questions.
         if (progress is not null)
         {
-            await progress.UpdateAsync($"Research #{idea.Id} · planning web queries…", cancellationToken);
+            await progress.UpdateAsync("1/4 planning web queries…", cancellationToken);
         }
 
         var planCompletion = await chat.CompleteAsync(
@@ -134,7 +134,7 @@ public sealed class ResearchService(
         string? advocateJson = null;
         if (progress is not null)
         {
-            await progress.UpdateAsync($"Research #{idea.Id} · ⚖️ advocate building the case for…", cancellationToken);
+            await progress.UpdateAsync("3/4 ⚖️ advocate building the case for…", cancellationToken);
         }
 
         var advocateCompletion = await chat.CompleteAsync(
@@ -163,8 +163,7 @@ public sealed class ResearchService(
             if (progress is not null)
             {
                 await progress.UpdateAsync(
-                    $"Research #{idea.Id} · round {rounds}: synthesizing from " +
-                    $"{blocks.Sum(b => b.Hits.Count)} snippets + {pageExcerpts.Count} pages…",
+                    $"4/4 round {rounds}: judging {blocks.Sum(b => b.Hits.Count)} snippets + {pageExcerpts.Count} pages…",
                     cancellationToken);
             }
 
@@ -192,8 +191,7 @@ public sealed class ResearchService(
             if (progress is not null)
             {
                 await progress.UpdateAsync(
-                    $"Research #{idea.Id} · digging into {unanswered.Count} open questions…",
-                    cancellationToken);
+                    $"4/4 digging into {unanswered.Count} open questions…", cancellationToken);
             }
 
             var followUps = unanswered.Take(4).Select(q => Truncate(q, 140)).ToList();
@@ -207,7 +205,8 @@ public sealed class ResearchService(
                     if (progress is not null)
                     {
                         await progress.UpdateAsync(
-                            $"Research #{idea.Id} · reading {Truncate(hit.Url, 60)}…", cancellationToken);
+                            $"reading {(Uri.TryCreate(hit.Url, UriKind.Absolute, out var pageUri) ? pageUri.Host : "page")}…",
+                            cancellationToken);
                     }
 
                     var text = await pageFetcher.FetchTextAsync(
@@ -285,7 +284,7 @@ public sealed class ResearchService(
             if (progress is not null)
             {
                 await progress.UpdateAsync(
-                    $"Research #{ideaId} · searching: {Truncate(query, 45)}…", cancellationToken);
+                    $"2/4 searching: {Truncate(query, 45)}…", cancellationToken);
             }
 
             await Task.Delay(options.SearchDelayMs, cancellationToken);
@@ -430,11 +429,22 @@ public sealed class ResearchService(
         }
 
         var answered = (report.Answers ?? []).Where(a => a.IsAnswered).Take(3).ToList();
+        if (answered.Count > 0)
+        {
+            builder.Append("\n<b>💬 Answered</b>\n");
+        }
+
         foreach (var answer in answered)
         {
-            builder.Append('\n').Append("❓ ").Append(WebUtility.HtmlEncode(TextClip.Clip(answer.Question ?? string.Empty, 100)))
-                .Append('\n').Append(Ui.Done).Append(' ')
-                .Append(WebUtility.HtmlEncode(TextClip.Clip(answer.Answer ?? string.Empty, 220))).Append('\n');
+            builder.Append("🔹 <i>").Append(WebUtility.HtmlEncode(TextClip.Clip(answer.Question ?? string.Empty, 100)))
+                .Append("</i>\n↳ ").Append(Linkify.Render(answer.Answer, 220));
+            var source = (answer.EvidenceUrls ?? []).FirstOrDefault(u => u is { Length: > 0 });
+            if (source is not null && Uri.TryCreate(source, UriKind.Absolute, out var sourceUri))
+            {
+                builder.Append(" <a href=\"").Append(source).Append("\">[").Append(sourceUri.Host).Append("]</a>");
+            }
+
+            builder.Append('\n');
         }
 
         var stillOpen = UnansweredQuestions(report, openQuestions).Take(3).ToList();
@@ -450,7 +460,7 @@ public sealed class ResearchService(
         if (!string.IsNullOrWhiteSpace(report.DifferentiationPath))
         {
             builder.Append("\n<b>🧭 Differentiation:</b> ")
-                .Append(WebUtility.HtmlEncode(TextClip.Clip(report.DifferentiationPath, 250))).Append('\n');
+                .Append(Linkify.Render(report.DifferentiationPath, 250)).Append('\n');
         }
 
         var risks = (report.Risks ?? []).Take(3).ToList();
@@ -463,7 +473,7 @@ public sealed class ResearchService(
         if (!string.IsNullOrWhiteSpace(report.MvpTest))
         {
             builder.Append("<b>🧪 MVP test:</b> ")
-                .Append(WebUtility.HtmlEncode(TextClip.Clip(report.MvpTest, 220))).Append('\n');
+                .Append(Linkify.Render(report.MvpTest, 220)).Append('\n');
         }
 
         var reportVariants = (report.RelatedVariants ?? []).Take(4).ToList();

@@ -27,7 +27,14 @@ public sealed class LemmyAdapter(
     {
         var config = adapterOptions.Value;
 
-        var views = await FetchTopPostsAsync(config, cancellationToken);
+        var views = new List<LemmyPostView>(await FetchTopPostsAsync(config, cancellationToken));
+        if (config.BackfillPerRun > 0)
+        {
+            // Random archive page of all-time top - old threads carry dense comment wisdom.
+            var page = Random.Shared.Next(1, 20);
+            views.AddRange(await FetchAllTimeTopAsync(config, page, cancellationToken));
+        }
+
         var yielded = 0;
 
         foreach (var view in views)
@@ -43,7 +50,8 @@ public sealed class LemmyAdapter(
             }
 
             var createdAt = post.Published ?? timeProvider.GetUtcNow();
-            if (options.Since is { } since && createdAt < since)
+            var isBackfill = (view.Counts?.Score ?? 0) >= config.MinBackfillScore;
+            if (!isBackfill && options.Since is { } since && createdAt < since)
             {
                 continue;
             }
@@ -67,6 +75,26 @@ public sealed class LemmyAdapter(
                 FetchedAt = timeProvider.GetUtcNow(),
                 Comments = comments,
             };
+        }
+    }
+
+    private async Task<IReadOnlyList<LemmyPostView>> FetchAllTimeTopAsync(
+        LemmyOptions config, int page, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await httpClient.GetFromJsonAsync<LemmyPostListResponse>(
+                new Uri($"api/v3/post/list?type_=All&sort=TopAll&limit={config.BackfillPerRun}&page={page}", UriKind.Relative),
+                JsonOptions, cancellationToken);
+            return
+            [
+                .. (response?.Posts ?? []).Where(v => (v.Counts?.Score ?? 0) >= config.MinBackfillScore),
+            ];
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
+        {
+            logger.LogWarning(ex, "Lemmy all-time backfill fetch failed (page {Page})", page);
+            return [];
         }
     }
 
