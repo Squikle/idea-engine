@@ -5,6 +5,15 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.13.1 — 2026-08-02
+
+- Progress messages are now append-only step logs: every stage adds a bullet
+  instead of replacing the text - each command leaves a readable history
+  (long logs trim oldest steps, header kept)
+- /ideas layout discipline: one pattern per line - status · monospace
+  `#id score` column (aligned regardless of emoji widths) · title;
+  operator ideas marked with a plain "— yours" suffix instead of the 🧑 marker
+
 ## 0.13.0 — 2026-08-02
 
 - ONE score per idea, everywhere: ⭐ Score = weighted categories (💰 demand 35%,

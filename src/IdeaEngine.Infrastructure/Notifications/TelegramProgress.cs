@@ -24,7 +24,8 @@ public sealed class TelegramProgressNotifier(
                 linkPreviewOptions: Telegram.Bot.Types.LinkPreviewOptions.Disabled,
                 cancellationToken: cancellationToken);
 
-            return new TelegramProgressHandle(botClient, adminChatId, message.MessageId, timeProvider, logger);
+            return new TelegramProgressHandle(
+                botClient, adminChatId, message.MessageId, text, timeProvider, logger);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -34,51 +35,125 @@ public sealed class TelegramProgressNotifier(
     }
 }
 
-internal sealed class TelegramProgressHandle(
-    ITelegramBotClient botClient,
-    long chatId,
-    int messageId,
-    TimeProvider timeProvider,
-    ILogger logger) : IProgressHandle
+internal sealed class TelegramProgressHandle : IProgressHandle
 {
     private static readonly TimeSpan MinEditInterval = TimeSpan.FromSeconds(1.5);
+    private const int MaxRenderedChars = 3600;
 
-    private string? _lastText;
+    private readonly ITelegramBotClient _botClient;
+    private readonly long _chatId;
+    private readonly int _messageId;
+    private readonly TimeProvider _timeProvider;
+    private readonly ILogger _logger;
+    private readonly List<string> _lines = [];
+
+    private string? _lastSentText;
     private DateTimeOffset _lastEditAt;
 
-    public Task UpdateAsync(string text, CancellationToken cancellationToken) =>
-        EditAsync(text, force: false, cancellationToken);
-
-    public Task CompleteAsync(string text, CancellationToken cancellationToken) =>
-        EditAsync(text, force: true, cancellationToken);
-
-    private async Task EditAsync(string text, bool force, CancellationToken cancellationToken)
+    public TelegramProgressHandle(
+        ITelegramBotClient botClient,
+        long chatId,
+        int messageId,
+        string headerText,
+        TimeProvider timeProvider,
+        ILogger logger)
     {
-        var now = timeProvider.GetUtcNow();
-        if (!force && (text == _lastText || now - _lastEditAt < MinEditInterval))
+        _botClient = botClient;
+        _chatId = chatId;
+        _messageId = messageId;
+        _timeProvider = timeProvider;
+        _logger = logger;
+        _lines.Add(headerText);
+    }
+
+    /// <summary>Appends a step to the log (never replaces) - the message reads as history.</summary>
+    public Task UpdateAsync(string text, CancellationToken cancellationToken)
+    {
+        AppendLine("• " + text);
+        return EditAsync(force: false, cancellationToken);
+    }
+
+    public Task CompleteAsync(string text, CancellationToken cancellationToken)
+    {
+        AppendLine(text);
+        return EditAsync(force: true, cancellationToken);
+    }
+
+    private void AppendLine(string line)
+    {
+        lock (_lines)
+        {
+            if (_lines.Count > 0 && _lines[^1] == line)
+            {
+                return;
+            }
+
+            _lines.Add(line);
+        }
+    }
+
+    private string RenderLog()
+    {
+        lock (_lines)
+        {
+            var text = string.Join('\n', _lines);
+            if (text.Length <= MaxRenderedChars)
+            {
+                return text;
+            }
+
+            // Keep the header and as many recent lines as fit.
+            var kept = new List<string> { _lines[0], "<i>… earlier steps trimmed …</i>" };
+            var budget = MaxRenderedChars - kept.Sum(l => l.Length + 1);
+            var tail = new List<string>();
+            for (var i = _lines.Count - 1; i > 0 && budget > 0; i--)
+            {
+                budget -= _lines[i].Length + 1;
+                if (budget > 0)
+                {
+                    tail.Add(_lines[i]);
+                }
+            }
+
+            tail.Reverse();
+            kept.AddRange(tail);
+            return string.Join('\n', kept);
+        }
+    }
+
+    private async Task EditAsync(bool force, CancellationToken cancellationToken)
+    {
+        var now = _timeProvider.GetUtcNow();
+        if (!force && now - _lastEditAt < MinEditInterval)
+        {
+            return; // buffered; next event (or Complete) flushes the accumulated log
+        }
+
+        var text = RenderLog();
+        if (text == _lastSentText)
         {
             return;
         }
 
         try
         {
-            await botClient.EditMessageText(
-                chatId: chatId,
-                messageId: messageId,
+            await _botClient.EditMessageText(
+                chatId: _chatId,
+                messageId: _messageId,
                 text: text,
                 parseMode: ParseMode.Html,
                 linkPreviewOptions: Telegram.Bot.Types.LinkPreviewOptions.Disabled,
                 cancellationToken: cancellationToken);
-            _lastText = text;
+            _lastSentText = text;
             _lastEditAt = now;
         }
         catch (ApiRequestException ex) when (ex.Message.Contains("message is not modified", StringComparison.OrdinalIgnoreCase))
         {
-            _lastText = text;
+            _lastSentText = text;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            logger.LogDebug(ex, "Progress edit failed (non-fatal)");
+            _logger.LogDebug(ex, "Progress edit failed (non-fatal)");
         }
     }
 }

@@ -753,17 +753,26 @@ internal sealed class TelegramCommandService(
             .ThenByDescending(x => x.Idea.Id)
             .Take(12);
 
-        var builder = new StringBuilder("<b>💡 Ideas</b> — 🔥 hot · 🟨 uncertain · 🟡 candidate · ☠️ dead\n<i>⭐ research-scored · ≈ skeptic estimate</i>\n\n");
+        var builder = new StringBuilder("<b>💡 Ideas</b>\n<i>🔥 hot · 🟨 uncertain · 🟡 new · ☠️ dead — ⭐ researched · ≈ estimate</i>\n\n");
         foreach (var entry in rated)
         {
+            // Monospace column keeps ids and scores aligned regardless of emoji widths.
+            var id = ('#' + entry.Idea.Id.ToString(CultureInfo.InvariantCulture)).PadRight(4);
+            var score = ((entry.Score.Total * 100).ToString("F0", CultureInfo.InvariantCulture) + "%")
+                .PadLeft(4) + (entry.Score.Source == "research" ? "⭐" : "≈");
+            var title = entry.Idea.Title.Length > 58
+                ? entry.Idea.Title[..57] + "…"
+                : entry.Idea.Title;
+
             builder.Append(IdeaEngine.Core.Common.Ui.IdeaStatus(entry.Idea.Status))
-                .Append(" <b>#").Append(entry.Idea.Id).Append("</b> ")
-                .Append(entry.Idea.Origin == "operator" ? "🧑 " : string.Empty)
-                .Append(entry.Score.Source == "research" ? "⭐" : "≈")
-                .Append((entry.Score.Total * 100).ToString("F0", CultureInfo.InvariantCulture)).Append('%')
-                .Append(" <i>").Append(entry.Idea.Category)
-                .Append("/e").Append(entry.Idea.EffortScale).Append("</i> ")
-                .Append(System.Net.WebUtility.HtmlEncode(entry.Idea.Title)).Append('\n');
+                .Append(" <code>").Append(id).Append(score).Append("</code> ")
+                .Append(System.Net.WebUtility.HtmlEncode(title));
+            if (entry.Idea.Origin == "operator")
+            {
+                builder.Append(" — <i>yours</i>");
+            }
+
+            builder.Append('\n');
         }
 
         builder.Append("\n/idea 5 for the full trace");
