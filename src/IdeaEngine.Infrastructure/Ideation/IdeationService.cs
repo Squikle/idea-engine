@@ -19,6 +19,8 @@ public sealed record IdeationBatchResult(
 
 public sealed record MetaAdviceResult(string Html, decimal CostUsd, string? StoppedReason);
 
+public sealed record OperatorIdeaResult(long? IdeaId, string Html, decimal CostUsd, string? StoppedReason);
+
 /// <summary>
 /// AI ideation sessions grounded in collected signals. Builder (strong model) proposes ONE
 /// idea citing signal ids; Skeptic (different vendor) attacks it; verdict decides
@@ -101,6 +103,97 @@ public sealed class IdeationService(
 
         return new IdeationBatchResult(
             advanced + killed + errors, advanced, killed, errors, totalCost, stoppedReason, lines);
+    }
+
+    /// <summary>
+    /// /drop: shape the operator's raw pitch into a structured idea, run the skeptic,
+    /// store with Origin=operator. The command layer chains web research afterwards.
+    /// </summary>
+    public async Task<OperatorIdeaResult> RunOperatorIdeaAsync(string pitch, CancellationToken cancellationToken)
+    {
+        var options = ideationOptions.Value;
+        if (!options.Enabled || !chat.IsConfigured)
+        {
+            return new OperatorIdeaResult(null, string.Empty, 0, "ideation disabled or OPENROUTER_API_KEY missing");
+        }
+
+        var check = await budgetGuard.CheckAsync(
+            StageName, options.DailyUsdCap, WorstBuilderCallUsd(options),
+            WorstSessionUsd(options), cancellationToken);
+        if (!check.Allowed)
+        {
+            return new OperatorIdeaResult(null, string.Empty, 0, check.Reason);
+        }
+
+        await statusBoard.UpdateAsync("Ideating", "shaping your idea", null, cancellationToken);
+
+        decimal cost = 0;
+        var shaping = await chat.CompleteAsync(
+            options.BuilderModel, IdeationPrompts.OperatorIdeaSystem, pitch,
+            options.MaxCompletionTokens, options.ReasoningEffort, cancellationToken);
+        cost += RecordLedger(options.BuilderModel, shaping,
+            options.BuilderInputPricePerMTok, options.BuilderOutputPricePerMTok);
+
+        var idea = LlmJson.TryParse<BuilderIdeaDto>(shaping?.Content);
+        if (idea is null || string.IsNullOrWhiteSpace(idea.Title))
+        {
+            await db.SaveChangesAsync(cancellationToken);
+            return new OperatorIdeaResult(null, string.Empty, cost, "could not shape the pitch (model output unparseable)");
+        }
+
+        SkepticReview? review = null;
+        var skepticCompletion = await chat.CompleteAsync(
+            options.SkepticModel, IdeationPrompts.SkepticSystem,
+            IdeationPrompts.BuildSkepticMessage(shaping!.Content!, []) +
+            "\nNote: operator-submitted idea. Judge on merits; verdict stays honest.",
+            options.MaxCompletionTokens, options.ReasoningEffort, cancellationToken);
+        cost += RecordLedger(options.SkepticModel, skepticCompletion,
+            options.SkepticInputPricePerMTok, options.SkepticOutputPricePerMTok);
+        review = LlmJson.TryParse<SkepticReview>(skepticCompletion?.Content);
+
+        var advanced = string.Equals(review?.Verdict, "advance", StringComparison.OrdinalIgnoreCase);
+        var entity = new IdeaEntity
+        {
+            Title = Truncate(idea.Title, 290)!,
+            Thesis = idea.Thesis ?? pitch,
+            Category = NormalizeCategory(idea.Category),
+            EffortScale = Math.Clamp(idea.Effort, 1, 5),
+            TargetUser = Truncate(idea.TargetUser, 290),
+            Monetization = Truncate(idea.Monetization, 590),
+            DistributionNote = Truncate(idea.DistributionNote, 390),
+            Status = advanced ? "candidate" : "dismissed",
+            Origin = "operator",
+            VariantsJson = idea.Variants is { Count: > 0 }
+                ? JsonSerializer.Serialize(idea.Variants.Take(6), LlmJson.Options)
+                : null,
+            ScoresJson = review?.Scores is null ? null : JsonSerializer.Serialize(review.Scores, LlmJson.Options),
+            SkepticJson = review is null ? null : JsonSerializer.Serialize(review, LlmJson.Options),
+            BuilderModel = options.BuilderModel,
+            SkepticModel = options.SkepticModel,
+            CostUsd = cost,
+            CreatedAt = timeProvider.GetUtcNow(),
+        };
+        db.Ideas.Add(entity);
+        await db.SaveChangesAsync(cancellationToken);
+
+        var builder = new StringBuilder();
+        builder.Append("<b>#").Append(entity.Id).Append(" · ")
+            .Append(WebUtility.HtmlEncode(entity.Title)).Append("</b> (yours)\n")
+            .Append("Skeptic: ").Append(advanced ? "advance" : "kill");
+        if (review?.KillReasons is { Count: > 0 } reasons && !advanced)
+        {
+            builder.Append(" — ").Append(WebUtility.HtmlEncode(Truncate(reasons[0], 120)!));
+        }
+
+        builder.Append('\n');
+        if (idea.Variants is { Count: > 0 })
+        {
+            builder.Append("Variants: ")
+                .Append(WebUtility.HtmlEncode(Truncate(string.Join(" · ", idea.Variants.Take(5)), 300)!))
+                .Append('\n');
+        }
+
+        return new OperatorIdeaResult(entity.Id, builder.ToString().TrimEnd(), cost, null);
     }
 
     public async Task<MetaAdviceResult> RunMetaSessionAsync(CancellationToken cancellationToken)
@@ -385,6 +478,7 @@ public sealed class IdeationService(
         [property: JsonPropertyName("monetization")] string? Monetization,
         [property: JsonPropertyName("distribution_note")] string? DistributionNote,
         [property: JsonPropertyName("cited_signals")] IReadOnlyList<string>? CitedSignals,
+        [property: JsonPropertyName("variants")] IReadOnlyList<string>? Variants,
         [property: JsonPropertyName("assumptions")] IReadOnlyList<string>? Assumptions);
 
 

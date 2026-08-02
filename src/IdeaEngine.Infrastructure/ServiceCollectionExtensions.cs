@@ -52,6 +52,7 @@ public static class ServiceCollectionExtensions
         services.Configure<IdeationOptions>(configuration.GetSection("IdeaEngine:Ai:Ideation"));
         services.Configure<AiBudgetOptions>(configuration.GetSection("IdeaEngine:Ai:Budget"));
         services.Configure<GlanceOptions>(configuration.GetSection("IdeaEngine:Ai:Glance"));
+        services.Configure<Research.ResearchOptions>(configuration.GetSection("IdeaEngine:Ai:Research"));
 
         // LLM calls run far longer than the 10s default attempt timeout.
         services.AddHttpClient<OpenRouterTriageAnalyzer>(
@@ -67,6 +68,21 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<TriageCoordinator>();
         services.AddScoped<Ideation.IdeationService>();
         services.AddScoped<GlanceService>();
+
+        services
+            .AddHttpClient<Research.BraveSearchClient>(client =>
+            {
+                client.BaseAddress = new Uri("https://api.search.brave.com/res/v1/");
+                client.Timeout = TimeSpan.FromSeconds(30);
+                client.DefaultRequestHeaders.Add("Accept", "application/json");
+                var braveKey = configuration["BRAVE_API_KEY"];
+                if (!string.IsNullOrWhiteSpace(braveKey))
+                {
+                    client.DefaultRequestHeaders.Add("X-Subscription-Token", braveKey);
+                }
+            })
+            .AddStandardResilienceHandler();
+        services.AddScoped<Research.ResearchService>();
     }
 
     private static void ConfigureLlmResilience(Microsoft.Extensions.Http.Resilience.HttpStandardResilienceOptions options)

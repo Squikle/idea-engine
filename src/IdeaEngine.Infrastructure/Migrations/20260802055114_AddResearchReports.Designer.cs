@@ -3,6 +3,7 @@ using System;
 using IdeaEngine.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Pgvector;
@@ -12,9 +13,11 @@ using Pgvector;
 namespace IdeaEngine.Infrastructure.Migrations
 {
     [DbContext(typeof(IdeaEngineDbContext))]
-    partial class IdeaEngineDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260802055114_AddResearchReports")]
+    partial class AddResearchReports
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -144,12 +147,6 @@ namespace IdeaEngine.Infrastructure.Migrations
                         .HasColumnType("character varying(600)")
                         .HasColumnName("monetization");
 
-                    b.Property<string>("Origin")
-                        .IsRequired()
-                        .HasMaxLength(16)
-                        .HasColumnType("character varying(16)")
-                        .HasColumnName("origin");
-
                     b.Property<string>("ScoresJson")
                         .HasColumnType("jsonb")
                         .HasColumnName("scores_json");
@@ -184,10 +181,6 @@ namespace IdeaEngine.Infrastructure.Migrations
                         .HasMaxLength(300)
                         .HasColumnType("character varying(300)")
                         .HasColumnName("title");
-
-                    b.Property<string>("VariantsJson")
-                        .HasColumnType("jsonb")
-                        .HasColumnName("variants_json");
 
                     b.HasKey("Id")
                         .HasName("pk_ideas");

@@ -5,6 +5,23 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.7.0 — 2026-08-02
+
+- `/research <id>` - the final validation stage closing the loop: plans 4-8 web
+  queries from the skeptic's open questions → Brave web search (free tier,
+  1 req/s) → grounded synthesis with mandatory "not found in results" honesty
+- Verdict moves the idea: go → HOT, maybe → validated, no-go → dismissed;
+  full report (competitors with links, Q&A, differentiation, risks, next steps)
+  stored in research_reports and delivered to Telegram
+- `/idea <id>` shows the latest research verdict; `/ideas` shows HOT/ok markers
+- New "research" stage under BudgetGuard ($2/day cap); ~$0.05-0.10 per report
+- `/drop <pitch>` - submit YOUR OWN idea: shaped into structure (with 3-6 variant
+  applications of the mechanic), skeptic-reviewed, then auto-chained into web
+  research - the full incubation pass in one command (~3 min, ~$0.15)
+- Research reports now include an MVP test (cheapest riskiest-assumption
+  experiment, lean-startup style) and stronger related variants
+- Ideas carry origin (ai | operator) and variants
+
 ## 0.6.0 — 2026-08-02
 
 - `/best` now shows ≤10-word glance lines instead of long article-ish summaries:

@@ -24,8 +24,14 @@ public sealed class IdeaEntity
 
     public string? DistributionNote { get; set; }
 
-    /// <summary>candidate | dismissed.</summary>
+    /// <summary>candidate | validated | hot | dismissed.</summary>
     public required string Status { get; set; }
+
+    /// <summary>ai | operator (dropped via /drop).</summary>
+    public string Origin { get; set; } = "ai";
+
+    /// <summary>Adjacent applications of the same mechanic, jsonb array.</summary>
+    public string? VariantsJson { get; set; }
 
     /// <summary>Signal ids the builder cited, jsonb array.</summary>
     public string? EvidenceJson { get; set; }

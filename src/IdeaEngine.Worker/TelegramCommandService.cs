@@ -8,6 +8,7 @@ using IdeaEngine.Infrastructure.Ideation;
 using IdeaEngine.Infrastructure.Ingestion;
 using IdeaEngine.Infrastructure.Notifications;
 using IdeaEngine.Infrastructure.Persistence;
+using IdeaEngine.Infrastructure.Research;
 using IdeaEngine.Infrastructure.Triage;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -32,6 +33,7 @@ internal sealed class TelegramCommandService(
     ILogger<TelegramCommandService> logger) : BackgroundService
 {
     private readonly SemaphoreSlim _ideateGate = new(1, 1);
+    private readonly SemaphoreSlim _researchGate = new(1, 1);
     private ITelegramBotClient? _bot;
     private long _adminChatId;
     private DateTimeOffset _startedAt;
@@ -39,6 +41,7 @@ internal sealed class TelegramCommandService(
     public override void Dispose()
     {
         _ideateGate.Dispose();
+        _researchGate.Dispose();
         base.Dispose();
     }
 
@@ -100,6 +103,8 @@ internal sealed class TelegramCommandService(
                 new BotCommand { Command = "collect", Description = "run a cycle now (optionally one source)" },
                 new BotCommand { Command = "analyze", Description = "run AI triage on the queue now" },
                 new BotCommand { Command = "ideate", Description = "AI builder-vs-skeptic idea sessions" },
+                new BotCommand { Command = "drop", Description = "submit YOUR idea: shape, skeptic, web research" },
+                new BotCommand { Command = "research", Description = "web-research a candidate idea" },
                 new BotCommand { Command = "ideas", Description = "recent ideas (live and killed)" },
                 new BotCommand { Command = "advise", Description = "AI reviews our own pipeline for gaps" },
                 new BotCommand { Command = "config", Description = "current configuration" },
@@ -150,6 +155,8 @@ internal sealed class TelegramCommandService(
                 "collect" => StartCollect(argument),
                 "analyze" => StartAnalyze(),
                 "ideate" => StartIdeate(argument),
+                "drop" => StartDrop(argument),
+                "research" => StartResearch(argument),
                 "advise" => StartAdvise(),
                 "ideas" => await BuildIdeasAsync(cancellationToken),
                 "config" => BuildConfig(),
@@ -483,6 +490,118 @@ internal sealed class TelegramCommandService(
         return $"Running {Math.Clamp(count, 1, 10)} ideation session(s)… builder vs skeptic, grounded in your signals.";
     }
 
+    private string StartDrop(string? argument)
+    {
+        if (argument is null || argument.Trim().Length < 12)
+        {
+            return "Usage: /drop <your idea pitch> (a sentence or a paragraph — the more context the better)";
+        }
+
+        if (!_ideateGate.Wait(0))
+        {
+            return "Ideation is busy — try again in a minute.";
+        }
+
+        var pitch = argument.Trim();
+        _ = Task.Run(
+            async () =>
+            {
+                try
+                {
+                    long? ideaId;
+                    using (var scope = scopeFactory.CreateScope())
+                    {
+                        var ideation = scope.ServiceProvider.GetRequiredService<IdeationService>();
+                        var shaped = await ideation.RunOperatorIdeaAsync(pitch, CancellationToken.None);
+                        if (shaped.StoppedReason is { } reason)
+                        {
+                            await notifier.SendAsync(
+                                $"Drop stopped: {System.Net.WebUtility.HtmlEncode(reason)}", CancellationToken.None);
+                            return;
+                        }
+
+                        ideaId = shaped.IdeaId;
+                        await notifier.SendAsync(
+                            shaped.Html + "\n<i>Researching the web now…</i>", CancellationToken.None);
+                    }
+
+                    if (ideaId is null)
+                    {
+                        return;
+                    }
+
+                    // Chain the full validation: wait for the research slot, then run.
+                    await _researchGate.WaitAsync(CancellationToken.None);
+                    try
+                    {
+                        using var scope = scopeFactory.CreateScope();
+                        var research = scope.ServiceProvider.GetRequiredService<ResearchService>();
+                        var result = await research.RunAsync(ideaId.Value, CancellationToken.None);
+                        var message = result.StoppedReason is { } stopped
+                            ? $"Research stopped: {System.Net.WebUtility.HtmlEncode(stopped)}"
+                            : result.Html;
+                        await notifier.SendAsync(message, CancellationToken.None);
+                    }
+                    finally
+                    {
+                        _researchGate.Release();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Drop pipeline failed");
+                    await notifier.SendAsync("Drop pipeline crashed — check logs.", CancellationToken.None);
+                }
+                finally
+                {
+                    _ideateGate.Release();
+                }
+            },
+            CancellationToken.None);
+
+        return "Got it. Shaping → skeptic → web research; expect 2-3 messages over ~3 min.";
+    }
+
+    private string StartResearch(string? argument)
+    {
+        if (!long.TryParse(argument, out var ideaId))
+        {
+            return "Usage: /research 5 (ids are shown by /ideas)";
+        }
+
+        if (!_researchGate.Wait(0))
+        {
+            return "Research is already running — one report at a time.";
+        }
+
+        _ = Task.Run(
+            async () =>
+            {
+                try
+                {
+                    using var scope = scopeFactory.CreateScope();
+                    var research = scope.ServiceProvider.GetRequiredService<ResearchService>();
+                    var result = await research.RunAsync(ideaId, CancellationToken.None);
+                    var message = result.StoppedReason is { } reason
+                        ? $"Research stopped: {System.Net.WebUtility.HtmlEncode(reason)}"
+                        : result.Html;
+                    await notifier.SendAsync(message, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Research run failed for idea {IdeaId}", ideaId);
+                    await notifier.SendAsync("Research crashed — check logs.", CancellationToken.None);
+                }
+                finally
+                {
+                    _researchGate.Release();
+                }
+            },
+            CancellationToken.None);
+
+        return $"Researching idea #{ideaId}: planning queries → web search → grounded verdict. ~2 min.";
+    }
+
     private string StartAdvise()
     {
         if (!_ideateGate.Wait(0))
@@ -535,7 +654,8 @@ internal sealed class TelegramCommandService(
 
         var rated = ideas
             .Select(i => new { Idea = i, Rating = ComputeRating(i) })
-            .OrderByDescending(x => x.Idea.Status == "candidate")
+            .OrderByDescending(x => x.Idea.Status is "hot" or "validated" or "candidate")
+            .ThenByDescending(x => x.Idea.Status == "hot")
             .ThenByDescending(x => x.Rating)
             .ThenByDescending(x => x.Idea.Id)
             .Take(12);
@@ -543,7 +663,13 @@ internal sealed class TelegramCommandService(
         var builder = new StringBuilder("<b>Ideas</b> (candidates first, by rating)\n");
         foreach (var entry in rated)
         {
-            var marker = entry.Idea.Status == "candidate" ? "LIVE" : "dead";
+            var marker = entry.Idea.Status switch
+            {
+                "hot" => "HOT",
+                "validated" => "ok",
+                "candidate" => "LIVE",
+                _ => "dead",
+            };
             builder.Append("• #").Append(entry.Idea.Id)
                 .Append(" r").Append(entry.Rating.ToString("F2", CultureInfo.InvariantCulture))
                 .Append(" [").Append(marker).Append("] [").Append(entry.Idea.Category)
@@ -672,11 +798,16 @@ internal sealed class TelegramCommandService(
 
         var skeptic = idea.SkepticJson is null ? null : LlmJson.TryParse<SkepticReview>(idea.SkepticJson);
         var rating = ComputeRating(idea);
+        var lastResearch = await db.ResearchReports
+            .Where(r => r.IdeaId == ideaId)
+            .OrderByDescending(r => r.Id)
+            .Select(r => new { r.Verdict, r.Confidence, r.SearchesUsed, r.CostUsd, r.CreatedAt })
+            .FirstOrDefaultAsync(cancellationToken);
 
         var builder = new StringBuilder();
         builder.Append("<b>#").Append(idea.Id).Append(" · ")
             .Append(System.Net.WebUtility.HtmlEncode(idea.Title)).Append("</b>\n")
-            .Append(idea.Status == "candidate" ? "LIVE" : "dead").Append(" · ")
+            .Append(idea.Status).Append(" · ")
             .Append(idea.Category).Append(" · effort ").Append(idea.EffortScale)
             .Append(" · rating ").Append(rating.ToString("F2", CultureInfo.InvariantCulture)).Append("\n\n")
             .Append(System.Net.WebUtility.HtmlEncode(idea.Thesis)).Append('\n');
@@ -684,6 +815,18 @@ internal sealed class TelegramCommandService(
         AppendLine(builder, "Target", idea.TargetUser);
         AppendLine(builder, "Monetization", idea.Monetization);
         AppendLine(builder, "Distribution", idea.DistributionNote);
+
+        if (lastResearch is not null)
+        {
+            builder.Append("<b>Research:</b> ").Append(lastResearch.Verdict.ToUpperInvariant())
+                .Append(" (conf ").Append(lastResearch.Confidence.ToString("F2", CultureInfo.InvariantCulture))
+                .Append(", ").Append(lastResearch.SearchesUsed).Append(" searches, $")
+                .Append(lastResearch.CostUsd.ToString("F3", CultureInfo.InvariantCulture)).Append(")\n");
+        }
+        else if (idea.Status == "candidate" && idea.Category != "meta")
+        {
+            builder.Append("<i>Not researched yet — /research ").Append(idea.Id).Append("</i>\n");
+        }
 
         if (skeptic is not null)
         {
@@ -798,6 +941,8 @@ internal sealed class TelegramCommandService(
         /collect hn|4chan|bluesky|lemmy|reddit — one source only
         /analyze — run AI triage on queued items now
         /ideate [n] — n builder-vs-skeptic idea sessions (default 1, max 10)
+        /drop <pitch> — YOUR idea through the full chain: shape → skeptic → web research
+        /research 5 — plan queries → Brave web search → grounded verdict (go/maybe/no-go)
         /ideas — recent ideas, live and killed
         /advise — AI proposes pipeline/source improvements
         /config — current configuration

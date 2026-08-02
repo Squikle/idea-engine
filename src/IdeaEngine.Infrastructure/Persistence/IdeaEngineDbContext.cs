@@ -18,6 +18,8 @@ public sealed class IdeaEngineDbContext(DbContextOptions<IdeaEngineDbContext> op
 
     public DbSet<AppStateEntity> AppState => Set<AppStateEntity>();
 
+    public DbSet<ResearchReportEntity> ResearchReports => Set<ResearchReportEntity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasPostgresExtension("vector");
@@ -87,6 +89,8 @@ public sealed class IdeaEngineDbContext(DbContextOptions<IdeaEngineDbContext> op
             idea.Property(x => x.Monetization).HasMaxLength(600);
             idea.Property(x => x.DistributionNote).HasMaxLength(400);
             idea.Property(x => x.Status).HasMaxLength(24);
+            idea.Property(x => x.Origin).HasMaxLength(16);
+            idea.Property(x => x.VariantsJson).HasColumnType("jsonb");
             idea.Property(x => x.EvidenceJson).HasColumnType("jsonb");
             idea.Property(x => x.ScoresJson).HasColumnType("jsonb");
             idea.Property(x => x.SkepticJson).HasColumnType("jsonb");
@@ -100,6 +104,22 @@ public sealed class IdeaEngineDbContext(DbContextOptions<IdeaEngineDbContext> op
             state.ToTable("app_state");
             state.HasKey(x => x.Key);
             state.Property(x => x.Key).HasMaxLength(64);
+        });
+
+        modelBuilder.Entity<ResearchReportEntity>(report =>
+        {
+            report.ToTable("research_reports");
+            report.HasIndex(x => x.IdeaId);
+            report.HasIndex(x => x.CreatedAt);
+            report.Property(x => x.Verdict).HasMaxLength(16);
+            report.Property(x => x.ReportJson).HasColumnType("jsonb");
+            report.Property(x => x.QueriesJson).HasColumnType("jsonb");
+            report.Property(x => x.Model).HasMaxLength(128);
+            report.Property(x => x.CostUsd).HasPrecision(10, 6);
+            report.HasOne(x => x.Idea)
+                .WithMany()
+                .HasForeignKey(x => x.IdeaId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

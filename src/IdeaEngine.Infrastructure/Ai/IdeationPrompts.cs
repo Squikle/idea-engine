@@ -48,6 +48,15 @@ public static class IdeationPrompts
         - Agreement between AIs is not evidence: name what EXTERNAL research must verify.
         """;
 
+    public const string OperatorIdeaSystem =
+        """
+        You shape a raw idea pitch from the operator into a structured, garage-scale product idea.
+        Keep their intent, sharpen the fuzzy parts, do not censor or moralize. Reply with ONLY a JSON object:
+        {"title":"...","thesis":"2-3 sentences","category":"saas|app|website|3dprint|hardware|wearable|service|content","target_user":"...","effort":1-5,"monetization":"most plausible model","distribution_note":"realistic first channel","variants":["3-6 adjacent applications of the same core mechanic - different content/audience, not synonyms"],"assumptions":["riskiest assumptions to test"]}
+        Rules: garage-scale (1-3 people, apartment-buildable). Variants matter: the operator wants
+        the mechanic explored across niches (e.g. "scroll feed for X" → music, quotes, events, deals).
+        """;
+
     public const string MetaSystem =
         """
         You advise on improving an automated product-opportunity discovery pipeline. You receive
