@@ -382,7 +382,7 @@ public sealed class ResearchService(
                     builder.Append(WebUtility.HtmlEncode(competitor.Name ?? "?"));
                 }
 
-                builder.Append(" — ").Append(WebUtility.HtmlEncode(Truncate(competitor.Why ?? string.Empty, 110)))
+                builder.Append(" — ").Append(WebUtility.HtmlEncode(TextClip.Clip(competitor.Why ?? string.Empty, 110)))
                     .Append('\n');
             }
         }
@@ -390,9 +390,9 @@ public sealed class ResearchService(
         var answered = (report.Answers ?? []).Where(a => a.IsAnswered).Take(3).ToList();
         foreach (var answer in answered)
         {
-            builder.Append('\n').Append("❓ ").Append(WebUtility.HtmlEncode(Truncate(answer.Question ?? string.Empty, 100)))
+            builder.Append('\n').Append("❓ ").Append(WebUtility.HtmlEncode(TextClip.Clip(answer.Question ?? string.Empty, 100)))
                 .Append('\n').Append(Ui.Done).Append(' ')
-                .Append(WebUtility.HtmlEncode(Truncate(answer.Answer ?? string.Empty, 220))).Append('\n');
+                .Append(WebUtility.HtmlEncode(TextClip.Clip(answer.Answer ?? string.Empty, 220))).Append('\n');
         }
 
         var stillOpen = UnansweredQuestions(report, openQuestions).Take(3).ToList();
@@ -401,34 +401,34 @@ public sealed class ResearchService(
             builder.Append("\n<b>🕳 Still open after ").Append(rounds).Append(" rounds</b>\n");
             foreach (var question in stillOpen)
             {
-                builder.Append("• ").Append(WebUtility.HtmlEncode(Truncate(question, 110))).Append('\n');
+                builder.Append("• ").Append(WebUtility.HtmlEncode(TextClip.Clip(question, 110))).Append('\n');
             }
         }
 
         if (!string.IsNullOrWhiteSpace(report.DifferentiationPath))
         {
             builder.Append("\n<b>🧭 Differentiation:</b> ")
-                .Append(WebUtility.HtmlEncode(Truncate(report.DifferentiationPath, 250))).Append('\n');
+                .Append(WebUtility.HtmlEncode(TextClip.Clip(report.DifferentiationPath, 250))).Append('\n');
         }
 
         var risks = (report.Risks ?? []).Take(3).ToList();
         if (risks.Count > 0)
         {
             builder.Append("<b>⚠️ Risks:</b> ")
-                .Append(WebUtility.HtmlEncode(Truncate(string.Join("; ", risks), 280))).Append('\n');
+                .Append(WebUtility.HtmlEncode(TextClip.Clip(string.Join("; ", risks), 280))).Append('\n');
         }
 
         if (!string.IsNullOrWhiteSpace(report.MvpTest))
         {
             builder.Append("<b>🧪 MVP test:</b> ")
-                .Append(WebUtility.HtmlEncode(Truncate(report.MvpTest, 220))).Append('\n');
+                .Append(WebUtility.HtmlEncode(TextClip.Clip(report.MvpTest, 220))).Append('\n');
         }
 
         var reportVariants = (report.RelatedVariants ?? []).Take(4).ToList();
         if (reportVariants.Count > 0)
         {
             builder.Append("<b>🔀 Stronger variants:</b> ")
-                .Append(WebUtility.HtmlEncode(Truncate(string.Join(" · ", reportVariants), 260))).Append('\n');
+                .Append(WebUtility.HtmlEncode(TextClip.Clip(string.Join(" · ", reportVariants), 260))).Append('\n');
         }
 
         var steps = (report.NextSteps ?? []).Take(3).ToList();
@@ -437,7 +437,7 @@ public sealed class ResearchService(
             builder.Append("<b>➡️ Next steps</b>\n");
             foreach (var step in steps)
             {
-                builder.Append("→ ").Append(WebUtility.HtmlEncode(Truncate(step, 140))).Append('\n');
+                builder.Append("→ ").Append(WebUtility.HtmlEncode(TextClip.Clip(step, 140))).Append('\n');
             }
         }
 

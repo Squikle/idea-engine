@@ -37,7 +37,7 @@ public sealed class ResearchCoordinator(
             await statusTracker.EndAsync(
                 Tracks.Research,
                 result.StoppedReason is { } reason
-                    ? $"#{ideaId} ⛔ {Truncate(reason, 40)}"
+                    ? $"#{ideaId} ⛔ {Core.Common.TextClip.Clip(reason, 40)}"
                     : $"#{ideaId} {Core.Common.Ui.Verdict(result.Verdict)}",
                 CancellationToken.None);
             return result;

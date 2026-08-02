@@ -208,14 +208,14 @@ public sealed class IdeationService(
             .Append("Skeptic: ").Append(advanced ? "🟢 advance" : "☠️ kill");
         if (review?.KillReasons is { Count: > 0 } reasons && !advanced)
         {
-            builder.Append(" — ").Append(WebUtility.HtmlEncode(Truncate(reasons[0], 120)!));
+            builder.Append(" — ").Append(WebUtility.HtmlEncode(TextClip.Clip(reasons[0], 120)));
         }
 
         builder.Append('\n');
         if (idea.Variants is { Count: > 0 })
         {
             builder.Append("Variants: ")
-                .Append(WebUtility.HtmlEncode(Truncate(string.Join(" · ", idea.Variants.Take(5)), 300)!))
+                .Append(WebUtility.HtmlEncode(TextClip.Clip(string.Join(" · ", idea.Variants.Take(5)), 300)))
                 .Append('\n');
         }
 
@@ -399,8 +399,8 @@ public sealed class IdeationService(
         await db.SaveChangesAsync(cancellationToken);
 
         var line = advanced
-            ? $"🟢 [{entity.Category}/e{entity.EffortScale}] {entity.Title}"
-            : $"☠️ [{entity.Category}/e{entity.EffortScale}] {entity.Title} — {Truncate(killReason, 90) ?? "skeptic said no"}";
+            ? $"🟢 #{entity.Id} [{entity.Category}/e{entity.EffortScale}] {entity.Title}"
+            : $"☠️ #{entity.Id} [{entity.Category}/e{entity.EffortScale}] {entity.Title} — {(killReason is null ? "skeptic said no" : TextClip.Clip(killReason, 90))}";
 
         return new SessionOutcome(
             advanced ? SessionOutcomeKind.Advanced : SessionOutcomeKind.Killed, line, cost);

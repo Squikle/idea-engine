@@ -5,6 +5,16 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.13.4 — 2026-08-02
+
+- Ideation result lines now carry the idea id (🟢 #14 [saas/e2] …) so /idea and
+  /research work straight from the message
+- No more mid-word cutoffs: word-boundary clipping with ellipsis across research
+  reports, ideation lines, status details
+- Oversized messages (over Telegram's 4096 limit) split at line boundaries and
+  all chunks arrive - previously they were rejected and silently dropped; plus
+  plain-text fallback on HTML rejection for every notification
+
 ## 0.13.3 — 2026-08-02
 
 - /ideas grouped by stage with headers (🔥 Hot / 🤔 Uncertain / 🌱 New / ☠️ Killed,
