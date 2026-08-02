@@ -5,6 +5,17 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.14.0 — 2026-08-02
+
+- Durable job queue: /drop and /research are persisted jobs now - they survive
+  restarts, re-queue automatically on startup (♻️ recovery notice), and resume
+  from checkpoints (a shaped idea never re-runs shaping; at most one stage repeats)
+- /ideas got inline keyboards: filter tabs (All · Top · 🔥 · 🤔 · 🌱 · ☠️) and
+  page arrows - nothing hidden behind "+N more" anymore
+- /ideas default = full list by number; /ideas top = best first
+- /help explains scores: ⭐ research-graded vs ≈ skeptic estimate; score =
+  ingredients, status = decision (fatal flaws kill regardless of score)
+
 ## 0.13.4 — 2026-08-02
 
 - Ideation result lines now carry the idea id (🟢 #14 [saas/e2] …) so /idea and

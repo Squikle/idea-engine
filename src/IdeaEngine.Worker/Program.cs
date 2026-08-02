@@ -27,6 +27,7 @@ try
     builder.Services.AddHostedService<TelegramCommandService>();
     builder.Services.AddHostedService<AutopilotHostedService>();
     builder.Services.AddHostedService<RetentionHostedService>();
+    builder.Services.AddHostedService<JobRunnerHostedService>();
 
     // Last-resort exit hook: unhandled exceptions on non-host threads.
     AppDomain.CurrentDomain.UnhandledException += (_, eventArgs) =>

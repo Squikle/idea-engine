@@ -5,6 +5,7 @@ using IdeaEngine.Core.Pipeline;
 using IdeaEngine.Core.Sources;
 using IdeaEngine.Infrastructure.Ai;
 using IdeaEngine.Infrastructure.Ideation;
+using IdeaEngine.Infrastructure.Jobs;
 using IdeaEngine.Infrastructure.Ingestion;
 using IdeaEngine.Infrastructure.Notifications;
 using IdeaEngine.Infrastructure.Persistence;
@@ -15,6 +16,7 @@ using Microsoft.Extensions.Options;
 using Telegram.Bot;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
+using Telegram.Bot.Types.ReplyMarkups;
 
 namespace IdeaEngine.Worker;
 
@@ -27,7 +29,6 @@ internal sealed class TelegramCommandService(
     IServiceScopeFactory scopeFactory,
     IngestionCoordinator coordinator,
     TriageCoordinator triageCoordinator,
-    ResearchCoordinator researchCoordinator,
     IStatusTracker statusTracker,
     INotifier notifier,
     IProgressNotifier progressNotifier,
@@ -64,7 +65,7 @@ internal sealed class TelegramCommandService(
                 var updates = await _bot.GetUpdates(
                     offset: offset,
                     timeout: 25,
-                    allowedUpdates: [UpdateType.Message],
+                    allowedUpdates: [UpdateType.Message, UpdateType.CallbackQuery],
                     cancellationToken: stoppingToken);
 
                 foreach (var update in updates)
@@ -131,6 +132,12 @@ internal sealed class TelegramCommandService(
 
     private async Task HandleUpdateAsync(Update update, CancellationToken cancellationToken)
     {
+        if (update.CallbackQuery is { } callback)
+        {
+            await HandleCallbackAsync(callback, cancellationToken);
+            return;
+        }
+
         if (update.Message is not { Text: { } text } message || message.Chat.Id != _adminChatId)
         {
             return;
@@ -153,12 +160,12 @@ internal sealed class TelegramCommandService(
                 "collect" => StartCollect(argument),
                 "analyze" => StartAnalyze(),
                 "ideate" => StartIdeate(argument),
-                "drop" => StartDrop(argument),
-                "research" => StartResearch(argument),
+                "drop" => await StartDropAsync(argument, cancellationToken),
+                "research" => await StartResearchAsync(argument, cancellationToken),
                 "kill" => await SetIdeaStatusAsync(argument, "dismissed", cancellationToken),
                 "promote" => await SetIdeaStatusAsync(argument, "hot", cancellationToken),
                 "advise" => StartAdvise(),
-                "ideas" => await BuildIdeasAsync(cancellationToken),
+                "ideas" => await SendIdeasPageAsync(argument, cancellationToken),
                 "config" => BuildConfig(),
                 "help" or "start" => BuildHelp(),
                 _ => $"Unknown command: /{command} — try /help",
@@ -513,162 +520,35 @@ internal sealed class TelegramCommandService(
         return string.Empty; // the progress message is the reply
     }
 
-    private string StartDrop(string? argument)
+    private async Task<string> StartDropAsync(string? argument, CancellationToken cancellationToken)
     {
         if (argument is null || argument.Trim().Length < 12)
         {
             return "Usage: /drop followed by your idea pitch — a sentence or a paragraph, more context is better.";
         }
 
-        var queuedBehind = !OperationGates.Ideation.Wait(0);
-        var pitch = argument.Trim();
-        _ = Task.Run(
-            async () =>
-            {
-                try
-                {
-                    var progress = await progressNotifier.StartAsync(
-                        queuedBehind
-                            ? "📦 Drop · queued behind the current ideation run…"
-                            : "📦 Drop · received, shaping your pitch…", CancellationToken.None);
-                    if (queuedBehind)
-                    {
-                        await OperationGates.Ideation.WaitAsync(CancellationToken.None);
-                        await progress.UpdateAsync("slot free — shaping your pitch…", CancellationToken.None);
-                    }
-
-                    long? ideaId;
-                    using (var scope = scopeFactory.CreateScope())
-                    {
-                        var ideation = scope.ServiceProvider.GetRequiredService<IdeationService>();
-                        var shaped = await ideation.RunOperatorIdeaAsync(pitch, progress, CancellationToken.None);
-                        if (shaped.StoppedReason is { } reason)
-                        {
-                            await progress.CompleteAsync(
-                                $"Drop stopped · {System.Net.WebUtility.HtmlEncode(reason)}", CancellationToken.None);
-                            return;
-                        }
-
-                        ideaId = shaped.IdeaId;
-                        await notifier.SendAsync(shaped.Html, CancellationToken.None);
-                    }
-
-                    if (ideaId is null)
-                    {
-                        return;
-                    }
-
-                    await progress.UpdateAsync(
-                        $"Drop · #{ideaId} stored · waiting for the research slot…", CancellationToken.None);
-
-                    // Chain the full validation: queue for the research slot, then run.
-                    var result = await researchCoordinator.RunAsync(
-                        ideaId.Value, progress, wait: true, CancellationToken.None);
-                    if (result is null)
-                    {
-                        return; // unreachable with wait: true
-                    }
-
-                    if (result.StoppedReason is { } stopped)
-                    {
-                        await progress.CompleteAsync(
-                            $"Drop · research stopped: {System.Net.WebUtility.HtmlEncode(stopped)}",
-                            CancellationToken.None);
-                        return;
-                    }
-
-                    await progress.CompleteAsync(
-                        $"Drop · done: {result.Verdict?.ToUpperInvariant()} · report below",
-                        CancellationToken.None);
-                    await notifier.SendAsync(result.Html, CancellationToken.None);
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, "Drop pipeline failed");
-                    await notifier.SendAsync("Drop pipeline crashed — check logs.", CancellationToken.None);
-                }
-                finally
-                {
-                    OperationGates.Ideation.Release();
-                }
-            },
-            CancellationToken.None);
-
-        return string.Empty; // the progress message is the reply
-    }
-
-    private async Task<string> SetIdeaStatusAsync(
-        string? argument, string newStatus, CancellationToken cancellationToken)
-    {
-        if (!long.TryParse(argument, out var ideaId))
-        {
-            return $"Usage: /{(newStatus == "hot" ? "promote" : "kill")} 5";
-        }
-
         using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
-        var idea = await db.Ideas.FindAsync([ideaId], cancellationToken);
-        if (idea is null)
-        {
-            return $"No idea #{ideaId}.";
-        }
+        var jobs = scope.ServiceProvider.GetRequiredService<JobService>();
+        var jobId = await jobs.EnqueueAsync(
+            "drop", new DropJobPayload(argument.Trim(), null), cancellationToken);
 
-        var previous = idea.Status;
-        idea.Status = newStatus;
-        await db.SaveChangesAsync(cancellationToken);
-
-        return $"{IdeaEngine.Core.Common.Ui.IdeaStatus(newStatus)} #{ideaId} " +
-            $"{System.Net.WebUtility.HtmlEncode(idea.Title.Length > 60 ? idea.Title[..59] + "…" : idea.Title)}" +
-            $" — {previous} → <b>{newStatus}</b> (your call, recorded)";
+        return $"📦 Queued as job #{jobId} — survives restarts, resumes from checkpoints. " +
+            "Shaping starts within seconds; progress log follows.";
     }
 
-    private string StartResearch(string? argument)
+    private async Task<string> StartResearchAsync(string? argument, CancellationToken cancellationToken)
     {
         if (!long.TryParse(argument, out var ideaId))
         {
             return "Usage: /research 5 (ids are shown by /ideas)";
         }
 
-        _ = Task.Run(
-            async () =>
-            {
-                try
-                {
-                    var progress = await progressNotifier.StartAsync(
-                        $"🔎 Research #{ideaId} · preparing…", CancellationToken.None);
+        using var scope = scopeFactory.CreateScope();
+        var jobs = scope.ServiceProvider.GetRequiredService<JobService>();
+        var jobId = await jobs.EnqueueAsync(
+            "research", new ResearchJobPayload(ideaId), cancellationToken);
 
-                    var result = await researchCoordinator.RunAsync(
-                        ideaId, progress, wait: false, CancellationToken.None);
-                    if (result is null)
-                    {
-                        await progress.CompleteAsync(
-                            $"Research #{ideaId} not started · another report is running, retry shortly",
-                            CancellationToken.None);
-                        return;
-                    }
-
-                    if (result.StoppedReason is { } reason)
-                    {
-                        await progress.CompleteAsync(
-                            $"Research #{ideaId} stopped · {System.Net.WebUtility.HtmlEncode(reason)}",
-                            CancellationToken.None);
-                        return;
-                    }
-
-                    await progress.CompleteAsync(
-                        $"Research #{ideaId} done · {result.Verdict?.ToUpperInvariant()} · report below",
-                        CancellationToken.None);
-                    await notifier.SendAsync(result.Html, CancellationToken.None);
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, "Research run failed for idea {IdeaId}", ideaId);
-                    await notifier.SendAsync("Research crashed — check logs.", CancellationToken.None);
-                }
-            },
-            CancellationToken.None);
-
-        return string.Empty; // the progress message is the reply
+        return $"🔎 Queued as job #{jobId} — survives restarts. Runs behind any active research.";
     }
 
     private string StartAdvise()
@@ -716,22 +596,80 @@ internal sealed class TelegramCommandService(
         return string.Empty; // the progress message is the reply
     }
 
-    private async Task<string> BuildIdeasAsync(CancellationToken cancellationToken)
+    private static readonly string[] IdeaFilters = ["all", "top", "hot", "uncertain", "new", "dead"];
+
+    private async Task<string> SendIdeasPageAsync(string? argument, CancellationToken cancellationToken)
     {
+        var filter = argument?.Trim().ToLowerInvariant() switch
+        {
+            "top" => "top",
+            "hot" => "hot",
+            "uncertain" => "uncertain",
+            "new" => "new",
+            "dead" or "killed" => "dead",
+            _ => "all",
+        };
+
+        var (text, keyboard) = await BuildIdeasPageAsync(filter, 1, cancellationToken);
+        await _bot!.SendMessage(
+            chatId: _adminChatId,
+            text: text,
+            parseMode: ParseMode.Html,
+            linkPreviewOptions: Telegram.Bot.Types.LinkPreviewOptions.Disabled,
+            replyMarkup: keyboard,
+            cancellationToken: cancellationToken);
+        return string.Empty; // sent with keyboard directly
+    }
+
+    private async Task HandleCallbackAsync(CallbackQuery callback, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (callback.Message is not { } message || message.Chat.Id != _adminChatId)
+            {
+                return;
+            }
+
+            var parts = (callback.Data ?? string.Empty).Split('|');
+            if (parts.Length >= 3 && parts[0] == "ideas")
+            {
+                var page = int.TryParse(parts[2], out var parsed) ? parsed : 1;
+                var (text, keyboard) = await BuildIdeasPageAsync(parts[1], page, cancellationToken);
+                await _bot!.EditMessageText(
+                    chatId: _adminChatId,
+                    messageId: message.MessageId,
+                    text: text,
+                    parseMode: ParseMode.Html,
+                    linkPreviewOptions: Telegram.Bot.Types.LinkPreviewOptions.Disabled,
+                    replyMarkup: keyboard,
+                    cancellationToken: cancellationToken);
+            }
+
+            await _bot!.AnswerCallbackQuery(callback.Id, cancellationToken: cancellationToken);
+        }
+        catch (Telegram.Bot.Exceptions.ApiRequestException ex)
+            when (ex.Message.Contains("message is not modified", StringComparison.OrdinalIgnoreCase))
+        {
+            await _bot!.AnswerCallbackQuery(callback.Id, cancellationToken: cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Callback handling failed");
+        }
+    }
+
+    private async Task<(string Text, InlineKeyboardMarkup Keyboard)> BuildIdeasPageAsync(
+        string filter, int page, CancellationToken cancellationToken)
+    {
+        const int pageSize = 8;
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
 
         var ideas = await db.Ideas
             .Where(i => i.Category != "meta")
             .OrderByDescending(i => i.Id)
-            .Take(20)
+            .Take(300)
             .ToListAsync(cancellationToken);
-        var metaCount = await db.Ideas.CountAsync(i => i.Category == "meta", cancellationToken);
-
-        if (ideas.Count == 0)
-        {
-            return "No product ideas yet — the autopilot bootstraps one run on startup, or /ideate 3 now.";
-        }
 
         var ideaIds = ideas.Select(i => i.Id).ToList();
         var latestReports = (await db.ResearchReports
@@ -742,7 +680,7 @@ internal sealed class TelegramCommandService(
             .GroupBy(r => r.IdeaId)
             .ToDictionary(
                 g => g.Key,
-                g => IdeaJson.SafeDeserialize<IdeaEngine.Infrastructure.Research.ResearchReportDto>(g.First().ReportJson));
+                g => IdeaJson.SafeDeserialize<ResearchReportDto>(g.First().ReportJson));
 
         var scored = ideas
             .Select(i => new
@@ -752,58 +690,123 @@ internal sealed class TelegramCommandService(
             })
             .ToList();
 
-        var builder = new StringBuilder("<b>💡 Ideas</b> <i>(⭐ researched · ≈ estimate)</i>\n");
-
-        void Section(string header, Func<string, bool> match, int limit)
+        var filtered = filter switch
         {
-            var group = scored
-                .Where(x => match(x.Idea.Status))
-                .OrderByDescending(x => x.Score.Total)
-                .ThenByDescending(x => x.Idea.Id)
-                .ToList();
-            if (group.Count == 0)
-            {
-                return;
-            }
+            "top" => scored.OrderByDescending(x => x.Score.Total).ThenByDescending(x => x.Idea.Id).ToList(),
+            "hot" => scored.Where(x => x.Idea.Status == "hot")
+                .OrderByDescending(x => x.Score.Total).ToList(),
+            "uncertain" => scored.Where(x => x.Idea.Status is "uncertain" or "validated")
+                .OrderByDescending(x => x.Score.Total).ToList(),
+            "new" => scored.Where(x => x.Idea.Status == "candidate")
+                .OrderByDescending(x => x.Score.Total).ToList(),
+            "dead" => scored.Where(x => x.Idea.Status == "dismissed")
+                .OrderByDescending(x => x.Idea.Id).ToList(),
+            _ => scored.OrderByDescending(x => x.Idea.Id).ToList(),
+        };
 
-            builder.Append('\n').Append(header).Append('\n');
-            foreach (var entry in group.Take(limit))
-            {
-                var id = ('#' + entry.Idea.Id.ToString(CultureInfo.InvariantCulture)).PadRight(4);
-                var pct = ((entry.Score.Total * 100).ToString("F0", CultureInfo.InvariantCulture) + "%")
-                    .PadLeft(4) + (entry.Score.Source == "research" ? "⭐" : "≈");
-                var title = entry.Idea.Title.Length > 58
-                    ? entry.Idea.Title[..57] + "…"
-                    : entry.Idea.Title;
+        var pages = Math.Max(1, (filtered.Count + pageSize - 1) / pageSize);
+        page = Math.Clamp(page, 1, pages);
+        var slice = filtered.Skip((page - 1) * pageSize).Take(pageSize).ToList();
 
-                builder.Append("<code>").Append(id).Append(pct).Append("</code> ")
-                    .Append(System.Net.WebUtility.HtmlEncode(title));
-                if (entry.Idea.Origin == "operator")
-                {
-                    builder.Append(" — <i>yours</i>");
-                }
+        var builder = new StringBuilder();
+        builder.Append("<b>💡 Ideas · ").Append(FilterLabel(filter)).Append("</b> — ")
+            .Append(filtered.Count).Append(" total <i>(⭐ researched · ≈ estimate)</i>\n\n");
 
-                builder.Append('\n');
-            }
-
-            if (group.Count > limit)
-            {
-                builder.Append("<i>… +").Append(group.Count - limit).Append(" more</i>\n");
-            }
+        if (slice.Count == 0)
+        {
+            builder.Append("<i>nothing here yet</i>\n");
         }
 
-        Section("🔥 <b>Hot</b>", st => st == "hot", 6);
-        Section("🤔 <b>Uncertain — your call</b>", st => st is "uncertain" or "validated", 6);
-        Section("🌱 <b>New — awaiting research</b>", st => st == "candidate", 6);
-        Section("☠️ <b>Killed</b>", st => st == "dismissed", 3);
-
-        builder.Append("\n/idea 5 for the full trace");
-        if (metaCount > 0)
+        foreach (var entry in slice)
         {
-            builder.Append(" · ").Append(metaCount).Append(" pipeline proposals live in the journal");
+            var id = ('#' + entry.Idea.Id.ToString(CultureInfo.InvariantCulture)).PadRight(4);
+            var pct = ((entry.Score.Total * 100).ToString("F0", CultureInfo.InvariantCulture) + "%")
+                .PadLeft(4) + (entry.Score.Source == "research" ? "⭐" : "≈");
+            var title = entry.Idea.Title.Length > 56 ? entry.Idea.Title[..55] + "…" : entry.Idea.Title;
+
+            builder.Append(IdeaEngine.Core.Common.Ui.IdeaStatus(entry.Idea.Status))
+                .Append(" <code>").Append(id).Append(pct).Append("</code> ")
+                .Append(System.Net.WebUtility.HtmlEncode(title));
+            if (entry.Idea.Origin == "operator")
+            {
+                builder.Append(" — <i>yours</i>");
+            }
+
+            builder.Append('\n');
         }
 
-        return builder.ToString();
+        builder.Append("\n/idea 5 for a trace card");
+
+        var filterRow = IdeaFilters
+            .Select(f => InlineKeyboardButton.WithCallbackData(
+                (f == filter ? "• " : string.Empty) + FilterButton(f), $"ideas|{f}|1"))
+            .ToArray();
+
+        var navRow = new List<InlineKeyboardButton>();
+        if (page > 1)
+        {
+            navRow.Add(InlineKeyboardButton.WithCallbackData("⬅️", $"ideas|{filter}|{page - 1}"));
+        }
+
+        navRow.Add(InlineKeyboardButton.WithCallbackData($"{page}/{pages}", $"ideas|{filter}|{page}"));
+        if (page < pages)
+        {
+            navRow.Add(InlineKeyboardButton.WithCallbackData("➡️", $"ideas|{filter}|{page + 1}"));
+        }
+
+        var keyboard = new InlineKeyboardMarkup(
+        [
+            filterRow[..2],
+            filterRow[2..],
+            [.. navRow],
+        ]);
+
+        return (builder.ToString(), keyboard);
+    }
+
+    private static string FilterLabel(string filter) => filter switch
+    {
+        "top" => "best first",
+        "hot" => "🔥 hot",
+        "uncertain" => "🤔 uncertain",
+        "new" => "🌱 new",
+        "dead" => "☠️ killed",
+        _ => "all by number",
+    };
+
+    private static string FilterButton(string filter) => filter switch
+    {
+        "top" => "Top",
+        "hot" => "🔥",
+        "uncertain" => "🤔",
+        "new" => "🌱",
+        "dead" => "☠️",
+        _ => "All",
+    };
+
+    private async Task<string> SetIdeaStatusAsync(
+        string? argument, string newStatus, CancellationToken cancellationToken)
+    {
+        if (!long.TryParse(argument, out var ideaId))
+        {
+            return $"Usage: /{(newStatus == "hot" ? "promote" : "kill")} 5";
+        }
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
+        var idea = await db.Ideas.FindAsync([ideaId], cancellationToken);
+        if (idea is null)
+        {
+            return $"No idea #{ideaId}.";
+        }
+
+        var previous = idea.Status;
+        idea.Status = newStatus;
+        await db.SaveChangesAsync(cancellationToken);
+
+        return $"{IdeaEngine.Core.Common.Ui.IdeaStatus(newStatus)} #{ideaId} " +
+            $"{System.Net.WebUtility.HtmlEncode(idea.Title.Length > 60 ? idea.Title[..59] + "…" : idea.Title)}" +
+            $" — {previous} → <b>{newStatus}</b> (your call, recorded)";
     }
 
     private async Task<string> BuildBestAsync(string? argument, CancellationToken cancellationToken)
@@ -1129,9 +1132,14 @@ internal sealed class TelegramCommandService(
 
         <b>View</b>
         /best 8 — top signals, glance lines, idea links
-        /ideas — idea list with numbers and ratings
+        /ideas — browse with buttons (filters + pages) · /ideas top = best first
         /idea 5 — full trace card for idea number 5
         /signals · /top · /status · /costs · /config
+
+        <b>Scores</b>
+        ⭐ = graded by web research (evidence) · ≈ = skeptic estimate (no research yet)
+        Score = ingredients (demand/pay/build/gap). Status = the decision — one fatal
+        flaw kills an idea regardless of a pretty score.
 
         <i>Numbers like 5 are idea ids — /ideas shows them as #5.</i>
         """;

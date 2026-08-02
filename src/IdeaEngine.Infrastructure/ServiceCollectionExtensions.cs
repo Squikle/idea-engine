@@ -98,6 +98,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<Research.ResearchService>();
         services.AddSingleton<Research.ResearchCoordinator>();
         services.AddScoped<Reporting.DigestService>();
+        services.AddScoped<Jobs.JobService>();
         services.AddScoped<Maintenance.RetentionService>();
         services.Configure<Autopilot.AutopilotOptions>(configuration.GetSection("IdeaEngine:Autopilot"));
         services.Configure<Maintenance.RetentionOptions>(configuration.GetSection("IdeaEngine:Retention"));

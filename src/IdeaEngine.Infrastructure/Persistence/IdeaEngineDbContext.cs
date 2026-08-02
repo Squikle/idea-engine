@@ -20,6 +20,8 @@ public sealed class IdeaEngineDbContext(DbContextOptions<IdeaEngineDbContext> op
 
     public DbSet<ResearchReportEntity> ResearchReports => Set<ResearchReportEntity>();
 
+    public DbSet<JobEntity> Jobs => Set<JobEntity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasPostgresExtension("vector");
@@ -104,6 +106,16 @@ public sealed class IdeaEngineDbContext(DbContextOptions<IdeaEngineDbContext> op
             state.ToTable("app_state");
             state.HasKey(x => x.Key);
             state.Property(x => x.Key).HasMaxLength(64);
+        });
+
+        modelBuilder.Entity<JobEntity>(job =>
+        {
+            job.ToTable("jobs");
+            job.HasIndex(x => x.Status);
+            job.Property(x => x.Kind).HasMaxLength(24);
+            job.Property(x => x.Status).HasMaxLength(16);
+            job.Property(x => x.PayloadJson).HasColumnType("jsonb");
+            job.Property(x => x.LastError).HasMaxLength(1000);
         });
 
         modelBuilder.Entity<ResearchReportEntity>(report =>
