@@ -619,15 +619,23 @@ internal sealed class TelegramCommandService(
             .Take(count)
             .ToList();
 
+        // Glance lines: cheapest model, cached per signal - repeat /best calls are free.
+        var glanceService = scope.ServiceProvider.GetRequiredService<GlanceService>();
+        var glances = await glanceService.EnsureGlancesAsync(
+            [.. top.Select(s => new GlanceInput(s.Id, s.Summary, s.Kind))], cancellationToken);
+
         var builder = new StringBuilder("<b>Best signals · 7 days</b>\n");
         var rank = 1;
         foreach (var signal in top)
         {
+            var line = glances.TryGetValue(signal.Id, out var glance)
+                ? glance
+                : signal.Summary.Length > 100 ? signal.Summary[..99] + "…" : signal.Summary;
+
             builder.Append(rank++).Append(". v")
                 .Append(signal.Value.ToString("F2", CultureInfo.InvariantCulture))
                 .Append(" [").Append(signal.Kind).Append("] ")
-                .Append(System.Net.WebUtility.HtmlEncode(
-                    signal.Summary.Length > 100 ? signal.Summary[..99] + "…" : signal.Summary));
+                .Append(System.Net.WebUtility.HtmlEncode(line));
 
             if (signal.Url is { Length: > 0 })
             {

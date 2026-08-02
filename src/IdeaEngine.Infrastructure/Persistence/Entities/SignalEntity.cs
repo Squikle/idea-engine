@@ -15,6 +15,9 @@ public sealed class SignalEntity
     /// <summary>One concrete sentence, understandable without the source post.</summary>
     public required string Summary { get; set; }
 
+    /// <summary>≤10-word glance line for rankings; generated lazily by the cheapest model, cached.</summary>
+    public string? Glance { get; set; }
+
     public string? Audience { get; set; }
 
     /// <summary>buys_despite_complaints | genuine_need | nice_to_have | no_market.</summary>

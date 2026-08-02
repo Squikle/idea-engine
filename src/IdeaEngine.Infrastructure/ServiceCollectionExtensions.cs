@@ -51,6 +51,7 @@ public static class ServiceCollectionExtensions
         services.Configure<TriageOptions>(configuration.GetSection("IdeaEngine:Ai:Triage"));
         services.Configure<IdeationOptions>(configuration.GetSection("IdeaEngine:Ai:Ideation"));
         services.Configure<AiBudgetOptions>(configuration.GetSection("IdeaEngine:Ai:Budget"));
+        services.Configure<GlanceOptions>(configuration.GetSection("IdeaEngine:Ai:Glance"));
 
         // LLM calls run far longer than the 10s default attempt timeout.
         services.AddHttpClient<OpenRouterTriageAnalyzer>(
@@ -65,6 +66,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<TriageService>();
         services.AddSingleton<TriageCoordinator>();
         services.AddScoped<Ideation.IdeationService>();
+        services.AddScoped<GlanceService>();
     }
 
     private static void ConfigureLlmResilience(Microsoft.Extensions.Http.Resilience.HttpStandardResilienceOptions options)

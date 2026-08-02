@@ -66,6 +66,7 @@ public sealed class IdeaEngineDbContext(DbContextOptions<IdeaEngineDbContext> op
             signal.HasIndex(x => x.CreatedAt);
             signal.Property(x => x.Kind).HasMaxLength(32);
             signal.Property(x => x.Summary).HasMaxLength(1000);
+            signal.Property(x => x.Glance).HasMaxLength(200);
             signal.Property(x => x.Audience).HasMaxLength(300);
             signal.Property(x => x.CommercialSentiment).HasMaxLength(48);
             signal.Property(x => x.Model).HasMaxLength(128);
