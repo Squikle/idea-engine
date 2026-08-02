@@ -5,11 +5,12 @@
 > [RUNBOOK.md](RUNBOOK.md) (how to run things). Keep this file terse and current —
 > updating it is part of every phase's definition of done.
 
-## Where the project actually is (2026-08-02, v0.23.0)
+## Where the project actually is (2026-08-02, v0.26.1)
 
 The phased plan below became reality faster than the phases: the full loop ships.
 
-**Shipped:** 6 live sources (HN, RedditRSS+archaeology, 4chan, Lemmy, Bluesky, YouTube;
+**Shipped:** 8 live sources (HN, RedditRSS+archaeology, 4chan, Lemmy, Bluesky, YouTube
+search + once-daily Shorts complaint-mining, GDELT news;
 Etsy/Pinterest/Reddit-OAuth pending third-party approvals) → triage (nano, budget-capped)
 → signals with glance lines → ideation (builder+skeptic, 13 playbook lenses, long-tail
 signal blending) → durable jobs (/drop /research /dig, restart-safe checkpoints, queue UX,
@@ -24,7 +25,13 @@ bumps, full ledger).
 
 **Not yet:** embeddings/pgvector actually used (column exists), eval harness/golden set
 (ADR-0002 promise), Pi/VPS deployment hardening (launchd/compose autostart, backups+rclone),
-web dashboard/mind-map, Tier-2 shop sources (keys pending), Bluesky/YouTube quota tuning.
+web dashboard/mind-map, Tier-2 shop sources (keys pending), Bluesky/YouTube quota tuning,
+**phone capture rig** (TikTok/Reels text capture — design approved, build instructions in
+[PHONE-RIG.md](PHONE-RIG.md), `SourceKind.PhoneRig=14` reserved, adapter not yet written).
+
+**Watch:** GDELT rate-limiter penalty-boxes aggressively; adapter now uses 10s pacing,
+zero retries, and a per-cycle circuit on the first 429. If `✓ Gdelt` keeps storing 0
+across several cycles, check `raw_items where source=4` and consider longer pacing.
 
 ## Pending decisions / blockers
 

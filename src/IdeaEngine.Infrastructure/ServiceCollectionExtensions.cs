@@ -265,7 +265,8 @@ public static class ServiceCollectionExtensions
             .AddStandardResilienceHandler(o =>
             {
                 // No retries: a GDELT 429 means penalty box; repeats extend the sentence.
-                o.Retry.MaxRetryAttempts = 0;
+                // (MaxRetryAttempts=0 is invalid for the options validator; disable via predicate.)
+                o.Retry.ShouldHandle = _ => Polly.PredicateResult.False();
                 o.AttemptTimeout.Timeout = TimeSpan.FromSeconds(30);
                 o.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(35);
                 o.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(70);

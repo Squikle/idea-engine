@@ -5,6 +5,22 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.26.1 — 2026-08-02
+
+### Fixed
+- **Worker failed to start after the GDELT hardening** (invalid resilience config:
+  retry count 0 rejected by options validation) — the bot was unresponsive from
+  16:38 until this release. Retries are now disabled via predicate instead.
+- **GDELT penalty-box handling**: one 429 stops the whole GDELT pass for that cycle
+  (previously every remaining query still fired, extending the box); request
+  spacing raised to 10s.
+
+### Added
+- **Phone capture rig handbook** (`docs/PHONE-RIG.md`): build instructions for the
+  TikTok/Reels text-capture rig (old Android + Raspberry Pi + burner account),
+  JSONL contract, phased integration (file drop → HTTPS ingest on VPS).
+  `SourceKind.PhoneRig = 14` reserved.
+
 ## 0.26.0 — 2026-08-02
 
 - GDELT source LIVE (free, no key): the global news firehose filtered to

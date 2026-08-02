@@ -26,4 +26,7 @@ public enum SourceKind
     Bluesky = 11,
     Lemmy = 12,
     RedditRss = 13,
+
+    /// <summary>Reserved for the phone capture rig (docs/PHONE-RIG.md). Do not reuse.</summary>
+    PhoneRig = 14,
 }
