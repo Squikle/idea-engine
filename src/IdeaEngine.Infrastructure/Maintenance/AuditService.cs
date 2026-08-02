@@ -24,6 +24,7 @@ public sealed class AuditService(
     OpenRouterChatClient chat,
     BudgetGuard budgetGuard,
     IAdviceJournal adviceJournal,
+    IStatusTracker statusTracker,
     TimeProvider timeProvider,
     IOptions<GlanceOptions> nanoOptions,
     ILogger<AuditService> logger)
@@ -40,6 +41,7 @@ public sealed class AuditService(
     public async Task<AuditResult> RunAsync(CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
+        await statusTracker.BeginAsync(Tracks.Audit, "sweeping for leaks…", cancellationToken);
 
         // Ideas from /drop or /dig that never reached research.
         var researchedIds = db.ResearchReports.Select(r => r.IdeaId);
@@ -127,6 +129,12 @@ public sealed class AuditService(
                 cancellationToken);
         }
 
+        await statusTracker.EndAsync(
+            Tracks.Audit,
+            neverResearched.Count == 0 && failedJobs.Count == 0
+                ? "no leaks"
+                : $"{neverResearched.Count} unresearched · {failedJobs.Count} failed",
+            CancellationToken.None);
         logger.LogInformation(
             "Audit: {NeverResearched} unresearched, {Failed} failed jobs, {Unreviewed} unreviewed",
             neverResearched.Count, failedJobs.Count, unreviewed);

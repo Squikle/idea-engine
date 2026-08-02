@@ -47,6 +47,23 @@ public sealed class TrackBoardRendererTests
     }
 
     [Fact]
+    public void Render_ExtraTracks_AppearAutomatically()
+    {
+        var snapshot = new StatusSnapshot(
+            new Dictionary<string, TrackState>
+            {
+                [Tracks.Sweep] = new(false, null, null, "23 scanned · 2 queued", Now.AddHours(-1), Now.AddDays(29)),
+                ["somefuturetrack"] = new(true, "working…", Now, null, null, null),
+            },
+            Started);
+
+        var html = TrackBoardRenderer.Render(snapshot, Now, TimeZoneInfo.Utc);
+
+        Assert.Contains("🔄 sweep: last 05:30 · 23 scanned · 2 queued", html, StringComparison.Ordinal);
+        Assert.Contains("somefuturetrack: ⏳ working…", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RenderOffline_ShowsReason()
     {
         var html = TrackBoardRenderer.RenderOffline("shutdown", Now, TimeZoneInfo.Utc);

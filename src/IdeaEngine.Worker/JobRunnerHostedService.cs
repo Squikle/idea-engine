@@ -19,6 +19,7 @@ internal sealed class JobRunnerHostedService(
     IServiceProvider serviceProvider,
     ResearchCoordinator researchCoordinator,
     IProgressNotifier progressNotifier,
+    IStatusTracker statusTracker,
     INotifier notifier,
     ILogger<JobRunnerHostedService> logger) : BackgroundService
 {
@@ -217,12 +218,24 @@ internal sealed class JobRunnerHostedService(
             job.OriginMessageId, cancellationToken);
         await SaveProgressIdAsync(job.Id, progress.MessageId, cancellationToken);
 
+        await statusTracker.BeginAsync(
+            Tracks.Dig, IdeaEngine.Core.Common.TextClip.Clip(payload.Topic, 30), cancellationToken);
         IdeaEngine.Infrastructure.Research.DigRunResult result;
-        using (var scope = scopeFactory.CreateScope())
+        try
         {
+            using var scope = scopeFactory.CreateScope();
             var dig = scope.ServiceProvider.GetRequiredService<IdeaEngine.Infrastructure.Research.DigService>();
             result = await dig.RunAsync(payload.Topic, progress, cancellationToken);
         }
+        finally
+        {
+            await statusTracker.EndAsync(Tracks.Dig, null, CancellationToken.None);
+        }
+
+        await statusTracker.EndAsync(
+            Tracks.Dig,
+            result.StoppedReason is null ? $"“{IdeaEngine.Core.Common.TextClip.Clip(payload.Topic, 20)}” +{result.SpawnedIdeas}🌱" : "⛔ stopped",
+            CancellationToken.None);
 
         if (result.StoppedReason is { } reason)
         {

@@ -82,6 +82,25 @@ internal sealed class RetentionHostedService(
         await db.SaveChangesAsync(cancellationToken);
     }
 
+    private static async Task PublishSchedulesAsync(IServiceProvider services, CancellationToken cancellationToken)
+    {
+        var db = services.GetRequiredService<IdeaEngine.Infrastructure.Persistence.IdeaEngineDbContext>();
+        var tracker = services.GetRequiredService<IdeaEngine.Core.Notifications.IStatusTracker>();
+
+        async Task PublishAsync(string key, string track, TimeSpan interval)
+        {
+            var state = await db.AppState.FindAsync([key], cancellationToken);
+            if (state is not null
+                && DateTimeOffset.TryParse(state.Value, null, System.Globalization.DateTimeStyles.RoundtripKind, out var last))
+            {
+                await tracker.ScheduleAsync(track, last + interval, cancellationToken);
+            }
+        }
+
+        await PublishAsync("last_audit", IdeaEngine.Core.Notifications.Tracks.Audit, TimeSpan.FromDays(7));
+        await PublishAsync("last_sweep", IdeaEngine.Core.Notifications.Tracks.Sweep, TimeSpan.FromDays(30));
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await Task.Delay(TimeSpan.FromSeconds(45), stoppingToken);
@@ -109,6 +128,7 @@ internal sealed class RetentionHostedService(
             await scope.ServiceProvider.GetRequiredService<RetentionService>().RunAsync(cancellationToken);
             await MaybeWeeklyAuditAsync(scope.ServiceProvider, cancellationToken);
             await MaybeMonthlySweepAsync(scope.ServiceProvider, cancellationToken);
+            await PublishSchedulesAsync(scope.ServiceProvider, cancellationToken);
         }
         catch (OperationCanceledException)
         {

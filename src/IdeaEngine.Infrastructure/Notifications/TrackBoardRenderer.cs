@@ -16,7 +16,12 @@ public static class TrackBoardRenderer
         builder.Append("<b>").Append(Ui.Live).Append(" idea-engine</b> · up ")
             .Append(FormatDuration(now - snapshot.WorkerStartedAt)).Append('\n');
 
-        foreach (var track in Tracks.All)
+        // Core tracks always render; any extra track that ever reported joins below.
+        var extras = snapshot.TrackStates.Keys
+            .Where(k => !Tracks.All.Contains(k))
+            .OrderBy(k => k, StringComparer.Ordinal);
+
+        foreach (var track in Tracks.All.Concat(extras))
         {
             if (!snapshot.TrackStates.TryGetValue(track, out var state))
             {
@@ -77,6 +82,9 @@ public static class TrackBoardRenderer
         Tracks.Ideate => Ui.Ideate,
         Tracks.Research => Ui.Research,
         Tracks.DigestTrack => Ui.Digest,
+        Tracks.Dig => "⛏",
+        Tracks.Sweep => "🔄",
+        Tracks.Audit => "🧾",
         _ => Ui.Live,
     };
 

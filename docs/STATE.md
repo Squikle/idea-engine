@@ -5,31 +5,26 @@
 > [RUNBOOK.md](RUNBOOK.md) (how to run things). Keep this file terse and current —
 > updating it is part of every phase's definition of done.
 
-## Phase status
+## Where the project actually is (2026-08-02, v0.23.0)
 
-- [x] **Phase 0 — Skeleton**: solution, projects, Serilog worker, compose (pgvector),
-      Dockerfile, docs, first unit tests. _Completed 2026-08-01._
-- [ ] **Phase 1 — MVP loop**: Reddit + HN + 4chan adapters → prefilter → triage (cheap LLM)
-      → store → daily Telegram digest. Eval harness v1 + golden set. Budget guard.
-- [ ] **Phase 2 — Ideas & validation**: clustering, synthesis, screen stage, agentic deep
-      validation (Brave + fetcher), scoring gates, hot alerts, idea commands, bake-off.
-- [ ] **Phase 3 — Breadth & trends**: GDELT, YouTube, Product Hunt, Etsy/eBay adapters;
-      topic timeseries; weekly trend report; monthly retrospective re-scorer;
-      Reddit deletion-compliance job.
-- [ ] **Phase 4 — Pi deployment**: arm64 deploy, backups (pg_dump + rclone), watchdog,
-      load report + VPS recommendation.
-- [ ] **Phase 5 — Later**: web dashboard, validation-service integrations, promo experiments.
+The phased plan below became reality faster than the phases: the full loop ships.
 
-## What exists right now
+**Shipped:** 6 live sources (HN, RedditRSS+archaeology, 4chan, Lemmy, Bluesky, YouTube;
+Etsy/Pinterest/Reddit-OAuth pending third-party approvals) → triage (nano, budget-capped)
+→ signals with glance lines → ideation (builder+skeptic, 13 playbook lenses, long-tail
+signal blending) → durable jobs (/drop /research /dig, restart-safe checkpoints, queue UX,
+retry/+$5 cards) → deep research (plan→search→advocate-vs-skeptic debate→judge, multi-round
+closure, page reading, arbitrage valuation, builds ON TOP of previous reports) → appeals
+(opus, auto on suspicious kills) → owner workflow (verify/kill/promote/note/re-research,
+inline keyboards everywhere) → /sweep re-eval with reasoning versioning (ReasoningMilestones)
+→ /audit leak checks → relations (nano dup/variant links) → autopilot (10:00 ideation +
+individual-judgment research queueing, 21:00 digest, Ontario time) → multi-track pinned
+status board (auto-renders any reporting track) → budget firewall (stage/daily/monthly caps,
+bumps, full ledger).
 
-| Piece | State |
-|---|---|
-| `IdeaEngine.Core` | `Sources/` contracts (`ISourceAdapter`, `RawItem`, `RawComment`, `SourceKind`, `SourceFetchOptions`), `Common/ContentHasher` |
-| `IdeaEngine.Infrastructure` | empty shell (fills in Phase 1) |
-| `IdeaEngine.Worker` | Serilog two-stage init, `StartupSummaryService` heartbeat, appsettings |
-| `tests/IdeaEngine.Tests` | `ContentHasherTests` (6 tests) |
-| Docker | `docker-compose.yml` (db: pgvector/pg17 on localhost:5433; app: profile `app`), multi-arch `Dockerfile` |
-| Secrets | `.env` (gitignored) from `.env.example`; API keys not yet issued |
+**Not yet:** embeddings/pgvector actually used (column exists), eval harness/golden set
+(ADR-0002 promise), Pi/VPS deployment hardening (launchd/compose autostart, backups+rclone),
+web dashboard/mind-map, Tier-2 shop sources (keys pending), Bluesky/YouTube quota tuning.
 
 ## Pending decisions / blockers
 
@@ -70,7 +65,8 @@
 
 ## For AI agents resuming work
 
-1. Read this file, then `git log --oneline -20`.
+1. Read this file, then **docs/DEVELOPMENT.md (the change protocol - mandatory)**,
+   then `git log --oneline -20` and `CHANGELOG.md`.
 2. `docker compose up -d db && dotnet build && dotnet test` — must be green before starting.
 3. Work in small commits; update this file + relevant docs before finishing a phase.
 4. Never ask the owner to paste secret values into chat; reference `.env` variable names.

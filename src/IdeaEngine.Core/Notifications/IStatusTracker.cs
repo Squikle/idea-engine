@@ -8,7 +8,12 @@ public static class Tracks
     public const string Ideate = "ideate";
     public const string Research = "research";
     public const string DigestTrack = "digest";
+    public const string Dig = "dig";
+    public const string Sweep = "sweep";
+    public const string Audit = "audit";
 
+    /// <summary>Core tracks always shown. Extras (dig/sweep/audit/anything new) appear
+    /// automatically once they report - forgetting to "register" a track is impossible.</summary>
     public static readonly IReadOnlyList<string> All =
         [Collect, Analyze, Ideate, Research, DigestTrack];
 }

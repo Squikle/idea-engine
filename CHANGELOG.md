@@ -5,6 +5,20 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.23.0 — 2026-08-02
+
+- Status board desync fixed structurally: dig ⛏ / sweep 🔄 / audit 🧾 now report
+  as tracks with live state, last result and next scheduled run (audit weekly,
+  sweep monthly) - and the board AUTO-RENDERS any track that ever reports, so a
+  future operation can never be forgotten again
+- docs/DEVELOPMENT.md: the change-protocol handbook for any developer or AI
+  model continuing without this chat's context - golden rules, run/verify
+  commands, per-change sync checklists (command/stage/long-op/source/verdict
+  logic), the sync map of "what forgets what", cost philosophy, owner
+  preferences that are law
+- docs/STATE.md refreshed to current reality (shipped vs not-yet) and now
+  points resuming agents at the handbook first
+
 ## 0.22.1 — 2026-08-02
 
 - /ideas default (top) now includes ☠️ ideas killed by ESTIMATE only (never

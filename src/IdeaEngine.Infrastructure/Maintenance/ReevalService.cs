@@ -55,6 +55,7 @@ public sealed class ReevalService(
     BudgetGuard budgetGuard,
     JobService jobs,
     IAdviceJournal adviceJournal,
+    IStatusTracker statusTracker,
     TimeProvider timeProvider,
     IOptions<ReevalOptions> reevalOptions,
     IOptions<GlanceOptions> nanoOptions,
@@ -88,6 +89,7 @@ public sealed class ReevalService(
         }
 
         var now = timeProvider.GetUtcNow();
+        await statusTracker.BeginAsync(Tracks.Sweep, "stage 0: heuristics…", cancellationToken);
 
         // ---- Stage 0: free heuristics over every researched idea. ----
         if (progress is not null)
@@ -168,6 +170,7 @@ public sealed class ReevalService(
         var scanned = latestReports.Count + backlog.Count;
         if (snapshots.Count == 0)
         {
+            await statusTracker.EndAsync(Tracks.Sweep, $"{scanned} scanned · all verdicts stand", CancellationToken.None);
             return new ReevalResult(
                 $"🔄 <b>Re-eval sweep</b>\nScanned {scanned} researched idea(s) — every verdict still stands. " +
                 "Nothing missed enough upgrades or carries unresolved tension.",
@@ -192,6 +195,7 @@ public sealed class ReevalService(
             StageName, options.DailyUsdCap, worstCall, worstCall, cancellationToken);
         if (!check.Allowed)
         {
+            await statusTracker.EndAsync(Tracks.Sweep, "⛔ budget", CancellationToken.None);
             return new ReevalResult(string.Empty, [], [], check.Reason);
         }
 
@@ -293,6 +297,10 @@ public sealed class ReevalService(
             $"flagged=[{string.Join(',', worthy.Skip(options.AutoQueueTop).Select(w => w.Snapshot.IdeaId))}]\n",
             cancellationToken);
 
+        await statusTracker.EndAsync(
+            Tracks.Sweep,
+            $"{scanned} scanned · {worthy.Count} worthy · {queuedJobs.Count} queued",
+            CancellationToken.None);
         logger.LogInformation(
             "Reeval: scanned {Scanned}, shortlist {Shortlist}, worthy {Worthy}, queued {Queued}",
             scanned, shortlist.Count, worthy.Count, queuedJobs.Count);
