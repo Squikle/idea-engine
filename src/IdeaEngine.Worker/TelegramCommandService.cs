@@ -1049,7 +1049,13 @@ internal sealed class TelegramCommandService(
             var id = ('#' + entry.Idea.Id.ToString(CultureInfo.InvariantCulture)).PadRight(4);
             var pct = ((entry.Score.Total * 100).ToString("F0", CultureInfo.InvariantCulture) + "%")
                 .PadLeft(4) + (entry.Score.Source == "research" ? "⭐" : "≈");
-            builder.Append(IdeaEngine.Core.Common.Ui.IdeaStatus(entry.Idea.Status))
+
+            // Uncertain is a wide bucket: tier arrows make its inner spread scannable.
+            var tier = entry.Idea.Status is "uncertain" or "validated"
+                ? entry.Score.Total >= 0.55 ? "↑" : entry.Score.Total < 0.40 ? "↓" : "→"
+                : string.Empty;
+
+            builder.Append(IdeaEngine.Core.Common.Ui.IdeaStatus(entry.Idea.Status)).Append(tier)
                 .Append(" <code>").Append(id).Append(pct).Append("</code> ")
                 .Append(System.Net.WebUtility.HtmlEncode(entry.Idea.Title));
             if (entry.Idea.Origin == "operator")

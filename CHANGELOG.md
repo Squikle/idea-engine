@@ -5,6 +5,18 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.22.1 — 2026-08-02
+
+- /ideas default (top) now includes ☠️ ideas killed by ESTIMATE only (never
+  researched = just the skeptic's opinion - research or /sweep can revive them);
+  evidence-based kills stay in the ☠️ tab
+- Uncertain tier arrows: 🤔↑ (⭐≥55%) · 🤔→ (40-54%) · 🤔↓ (<40%) - the wide
+  bucket's inner spread is scannable at a glance
+- 10 ideas per page (was 8)
+- Judge decisiveness rules: "maybe" only for genuinely split evidence, scores
+  must use the full 0-1 range instead of camping at 0.5 - fewer lazy
+  "uncertain" verdicts going forward
+
 ## 0.22.0 — 2026-08-02
 
 - /sweep - the verdict-improvement pass (monthly auto too). Three-stage funnel,
