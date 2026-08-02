@@ -20,6 +20,7 @@ try
 
     builder.Services.AddIdeaEngineInfrastructure(builder.Configuration);
     builder.Services.AddHostedService<StartupSummaryService>();
+    builder.Services.AddHostedService<IngestionHostedService>();
 
     var host = builder.Build();
     await host.RunAsync();
