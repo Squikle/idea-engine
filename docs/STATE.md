@@ -38,8 +38,10 @@
   until granted, Phase 1 uses the Reddit **RSS adapter** (feed position = score proxy).
 - **Etsy app approval pending** — keystring saved (correct shape) but returns
   "not active" until Etsy reviews the app. Adapter builds the day it activates.
-- **Pinterest trial access pending** — app created; token/secret locked until
-  Pinterest approves trial. Trends adapter builds once the token exists.
+- **Pinterest trial access pending** — app created, token GENERATED AND SAVED in
+  .env, but every v5 endpoint (even user_account) returns "consumer type not
+  supported" until the trial review completes. Re-test on approval email; Trends
+  may additionally need standard access — request from the app page if so.
 - **Parked:** Best Buy (rejects free-email signups). Optional queue: AliExpress
   affiliate, eBay dev keys.
 - **Account setup by owner** — Telegram ✅ (bot live, chat id wired), OpenRouter ✅
