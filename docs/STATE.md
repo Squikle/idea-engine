@@ -56,6 +56,9 @@
   updated when the shape changes. This file updated every phase.
 - **Secrets:** only in `.env`/user-secrets. Never in code, config committed to git, or AI chats.
 - **XML doc comments:** on public contracts where intent isn't obvious from the name. No ceremony.
+- **Outward-facing form texts** (API access applications, developer forms, support
+  tickets): always run through the humanizer pass - first person, no em dashes, no
+  AI-parallelisms, hobbyist voice, honest. Owner's standing rule.
 
 ## For AI agents resuming work
 
