@@ -63,4 +63,60 @@ public sealed class ScoringTests
     {
         Assert.Equal(0, IdeaScoring.Rating(scores, 1.0));
     }
+
+    [Fact]
+    public void Compute_ResearchOverridesSkeptic_AndUsesResearchConfidence()
+    {
+        var skeptic = new Dictionary<string, double>
+        {
+            ["demand"] = 0.2, ["willingness_to_pay"] = 0.2, ["feasibility_solo"] = 0.2, ["differentiation"] = 0.2,
+        };
+        var research = new Dictionary<string, double>
+        {
+            ["demand"] = 1.0, ["willingness_to_pay"] = 1.0, ["feasibility_solo"] = 1.0, ["competition_gap"] = 1.0,
+        };
+
+        var score = IdeaScoring.Compute(skeptic, 0.9, research, 1.0);
+
+        Assert.Equal("research", score.Source);
+        Assert.Equal(1.0, score.Total, 3); // all 1.0 × full confidence
+        Assert.Equal(1.0, score.Categories["gap"], 3); // competition_gap mapped to unified "gap"
+    }
+
+    [Fact]
+    public void Compute_SkepticFallback_MapsDifferentiationToGap()
+    {
+        var skeptic = new Dictionary<string, double>
+        {
+            ["demand"] = 0.8, ["differentiation"] = 0.4,
+        };
+
+        var score = IdeaScoring.Compute(skeptic, 1.0, null, 0);
+
+        Assert.Equal("skeptic", score.Source);
+        Assert.Equal(0.4, score.Categories["gap"], 3);
+        // weighted: (0.8*0.35 + 0.4*0.15) / 0.50 = 0.68, confidence factor 1.0
+        Assert.Equal(0.68, score.Total, 3);
+    }
+
+    [Fact]
+    public void Compute_LowConfidence_DiscountsTotal()
+    {
+        var research = new Dictionary<string, double> { ["demand"] = 1.0 };
+
+        var confident = IdeaScoring.Compute(null, 0, research, 1.0);
+        var unsure = IdeaScoring.Compute(null, 0, research, 0.0);
+
+        Assert.Equal(1.0, confident.Total, 3);
+        Assert.Equal(0.5, unsure.Total, 3);
+    }
+
+    [Fact]
+    public void Compute_NothingScored_IsNoneWithZeroTotal()
+    {
+        var score = IdeaScoring.Compute(null, 0.5, null, 0);
+
+        Assert.Equal(0, score.Total);
+        Assert.Empty(score.Categories);
+    }
 }

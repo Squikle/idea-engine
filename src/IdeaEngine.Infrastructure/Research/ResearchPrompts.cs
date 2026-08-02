@@ -30,6 +30,8 @@ public static class ResearchPrompts
          "next_steps":["concrete first actions if pursued"],
          "scores":{"demand":0.0-1.0,"competition_gap":0.0-1.0,"willingness_to_pay":0.0-1.0,"feasibility_solo":0.0-1.0}}
         Rules:
+        - List EVERY distinct competitor present in the results, each with name AND url.
+          Omitting a competitor that appears in the results is a failed report.
         - "no-go" when a strong incumbent covers the need with no realistic differentiation.
         - "go" requires BOTH demand evidence AND a reachable gap; otherwise "maybe".
         - Garage-scale lens: launchable by 1-3 people from an apartment.

@@ -730,21 +730,37 @@ internal sealed class TelegramCommandService(
             return "No product ideas yet — the autopilot bootstraps one run on startup, or /ideate 3 now.";
         }
 
+        var ideaIds = ideas.Select(i => i.Id).ToList();
+        var latestReports = (await db.ResearchReports
+                .Where(r => ideaIds.Contains(r.IdeaId))
+                .OrderByDescending(r => r.Id)
+                .Select(r => new { r.IdeaId, r.ReportJson })
+                .ToListAsync(cancellationToken))
+            .GroupBy(r => r.IdeaId)
+            .ToDictionary(
+                g => g.Key,
+                g => IdeaJson.SafeDeserialize<IdeaEngine.Infrastructure.Research.ResearchReportDto>(g.First().ReportJson));
+
         var rated = ideas
-            .Select(i => new { Idea = i, Rating = IdeaJson.ComputeRating(i) })
+            .Select(i => new
+            {
+                Idea = i,
+                Score = IdeaJson.ComputeScore(i, latestReports.GetValueOrDefault(i.Id)),
+            })
             .OrderByDescending(x => x.Idea.Status is "hot" or "uncertain" or "validated" or "candidate")
             .ThenByDescending(x => x.Idea.Status == "hot")
-            .ThenByDescending(x => x.Rating)
+            .ThenByDescending(x => x.Score.Total)
             .ThenByDescending(x => x.Idea.Id)
             .Take(12);
 
-        var builder = new StringBuilder("<b>💡 Ideas</b> — 🔥 hot · 🟨 uncertain · 🟡 candidate · ☠️ dead\n\n");
+        var builder = new StringBuilder("<b>💡 Ideas</b> — 🔥 hot · 🟨 uncertain · 🟡 candidate · ☠️ dead\n<i>⭐ research-scored · ≈ skeptic estimate</i>\n\n");
         foreach (var entry in rated)
         {
             builder.Append(IdeaEngine.Core.Common.Ui.IdeaStatus(entry.Idea.Status))
                 .Append(" <b>#").Append(entry.Idea.Id).Append("</b> ")
                 .Append(entry.Idea.Origin == "operator" ? "🧑 " : string.Empty)
-                .Append((entry.Rating * 100).ToString("F0", CultureInfo.InvariantCulture)).Append('%')
+                .Append(entry.Score.Source == "research" ? "⭐" : "≈")
+                .Append((entry.Score.Total * 100).ToString("F0", CultureInfo.InvariantCulture)).Append('%')
                 .Append(" <i>").Append(entry.Idea.Category)
                 .Append("/e").Append(entry.Idea.EffortScale).Append("</i> ")
                 .Append(System.Net.WebUtility.HtmlEncode(entry.Idea.Title)).Append('\n');
@@ -874,7 +890,6 @@ internal sealed class TelegramCommandService(
         }
 
         var skeptic = idea.SkepticJson is null ? null : LlmJson.TryParse<SkepticReview>(idea.SkepticJson);
-        var rating = IdeaJson.ComputeRating(idea);
         var lastResearch = await db.ResearchReports
             .Where(r => r.IdeaId == ideaId)
             .OrderByDescending(r => r.Id)
@@ -888,9 +903,31 @@ internal sealed class TelegramCommandService(
         builder.Append(IdeaEngine.Core.Common.Ui.IdeaStatus(idea.Status)).Append(" <b>#").Append(idea.Id).Append(" · ")
             .Append(System.Net.WebUtility.HtmlEncode(idea.Title)).Append("</b>\n")
             .Append(idea.Status).Append(" · ")
-            .Append(idea.Category).Append(" · effort ").Append(idea.EffortScale)
-            .Append(" · rating ").Append((rating * 100).ToString("F0", CultureInfo.InvariantCulture)).Append("%\n\n")
-            .Append(System.Net.WebUtility.HtmlEncode(idea.Thesis)).Append('\n');
+            .Append(idea.Category).Append(" · effort ").Append(idea.EffortScale).Append('\n');
+
+        var score = IdeaJson.ComputeScore(idea, researchReport);
+        if (score.Source != "none")
+        {
+            builder.Append("\n⭐ <b>Score ")
+                .Append((score.Total * 100).ToString("F0", CultureInfo.InvariantCulture))
+                .Append("%</b> — ")
+                .Append(score.Source == "research" ? "web-research scored" : "skeptic estimate (pre-research)")
+                .Append(" · evidence confidence ")
+                .Append((score.Confidence * 100).ToString("F0", CultureInfo.InvariantCulture)).Append("%\n");
+
+            var labels = new Dictionary<string, string>
+            {
+                ["demand"] = "💰 demand",
+                ["pay"] = "💵 pay",
+                ["build"] = "🔨 build",
+                ["gap"] = "🏪 gap",
+            };
+            builder.AppendJoin(" · ", score.Categories.Select(c =>
+                    $"{labels.GetValueOrDefault(c.Key, c.Key)} {(c.Value * 100).ToString("F0", CultureInfo.InvariantCulture)}%"))
+                .Append('\n');
+        }
+
+        builder.Append('\n').Append(System.Net.WebUtility.HtmlEncode(idea.Thesis)).Append('\n');
 
         AppendLine(builder, "Target", idea.TargetUser);
         AppendLine(builder, "Monetization", idea.Monetization);
@@ -919,6 +956,36 @@ internal sealed class TelegramCommandService(
                 {
                     builder.Append("• ").Append(System.Net.WebUtility.HtmlEncode(
                         item.Question!.Length > 100 ? item.Question[..99] + "…" : item.Question)).Append('\n');
+                }
+            }
+
+            var competitors = (researchReport?.Competitors ?? [])
+                .Where(c => !string.IsNullOrWhiteSpace(c.Name))
+                .Take(6)
+                .ToList();
+            if (competitors.Count > 0)
+            {
+                builder.Append("<b>🏪 Competitors</b>\n");
+                foreach (var competitor in competitors)
+                {
+                    builder.Append("• ");
+                    if (competitor.Url is { Length: > 0 })
+                    {
+                        builder.Append("<a href=\"").Append(competitor.Url).Append("\">")
+                            .Append(System.Net.WebUtility.HtmlEncode(competitor.Name!)).Append("</a>");
+                    }
+                    else
+                    {
+                        builder.Append(System.Net.WebUtility.HtmlEncode(competitor.Name!));
+                    }
+
+                    if (competitor.Why is { Length: > 0 } why)
+                    {
+                        builder.Append(" — ").Append(System.Net.WebUtility.HtmlEncode(
+                            why.Length > 90 ? why[..89] + "…" : why));
+                    }
+
+                    builder.Append('\n');
                 }
             }
         }

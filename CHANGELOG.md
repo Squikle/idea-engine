@@ -5,6 +5,18 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.13.0 — 2026-08-02
+
+- ONE score per idea, everywhere: ⭐ Score = weighted categories (💰 demand 35%,
+  💵 willingness-to-pay 30%, 🔨 solo-buildability 20%, 🏪 competition gap 15%)
+  × evidence confidence. Category values come from web research when it exists
+  (evidence beats opinion), else from the skeptic - the source is always labeled
+- /ideas: ⭐54% research-scored vs ≈54% skeptic estimate; /idea shows the full
+  category breakdown line
+- Competitors always surfaced with names AND urls: on the /idea card (up to 6,
+  persistent), in research reports (up to 6), and the synthesis prompt now
+  treats omitting a found competitor as a failed report
+
 ## 0.12.0 — 2026-08-02
 
 - Verdict clarity: research "maybe" now maps to status `uncertain` 🟨 (was

@@ -365,7 +365,7 @@ public sealed class ResearchService(
             .Append((report.Confidence * 100).ToString("F0", CultureInfo.InvariantCulture))
             .Append("% → status ").Append(idea.Status).Append('\n');
 
-        var competitors = (report.Competitors ?? []).Take(4).ToList();
+        var competitors = (report.Competitors ?? []).Take(6).ToList();
         if (competitors.Count > 0)
         {
             builder.Append("\n<b>🏪 Competitors</b>\n");

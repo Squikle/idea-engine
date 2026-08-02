@@ -3,18 +3,22 @@ using IdeaEngine.Core.Pipeline;
 using IdeaEngine.Infrastructure.Ai;
 using IdeaEngine.Infrastructure.Ideation;
 using IdeaEngine.Infrastructure.Persistence.Entities;
+using IdeaEngine.Infrastructure.Research;
 
 namespace IdeaEngine.Worker;
 
 /// <summary>Shared helpers for reading our own idea jsonb columns (commands + autopilot).</summary>
 internal static class IdeaJson
 {
-    public static double ComputeRating(IdeaEntity idea)
-    {
-        var scores = SafeDeserialize<Dictionary<string, double>>(idea.ScoresJson);
-        var skeptic = SafeDeserialize<SkepticReview>(idea.SkepticJson);
-        return IdeaScoring.Rating(scores, skeptic?.Confidence ?? 0);
-    }
+    /// <summary>THE score: research-backed when a report exists, skeptic estimate otherwise.</summary>
+    public static IdeaScore ComputeScore(IdeaEntity idea, ResearchReportDto? research) =>
+        IdeaScoring.Compute(
+            SafeDeserialize<Dictionary<string, double>>(idea.ScoresJson),
+            SafeDeserialize<SkepticReview>(idea.SkepticJson)?.Confidence ?? 0,
+            research?.Scores,
+            research?.Confidence ?? 0);
+
+    public static double ComputeRating(IdeaEntity idea) => ComputeScore(idea, null).Total;
 
     public static List<long> ParseEvidence(string? evidenceJson) =>
         SafeDeserialize<List<long>>(evidenceJson) ?? [];

@@ -25,9 +25,75 @@ public static class SignalScoring
             4);
 }
 
+/// <summary>
+/// THE idea score - one number everywhere. Category values come from web research when it
+/// exists (evidence beats opinion), else from the skeptic. Confidence discounts the total.
+/// </summary>
+public sealed record IdeaScore(
+    double Total,
+    double Confidence,
+    string Source,
+    IReadOnlyDictionary<string, double> Categories)
+{
+    public static readonly IdeaScore None = new(0, 0, "none", new Dictionary<string, double>());
+}
+
 /// <summary>Composite rating for ideas from skeptic scores.</summary>
 public static class IdeaScoring
 {
+    /// <summary>Unified category keys with weights (research key ↔ skeptic key mapping below).</summary>
+    private static readonly (string Key, string ResearchKey, string SkepticKey, double Weight)[] Unified =
+    [
+        ("demand", "demand", "demand", 0.35),
+        ("pay", "willingness_to_pay", "willingness_to_pay", 0.30),
+        ("build", "feasibility_solo", "feasibility_solo", 0.20),
+        ("gap", "competition_gap", "differentiation", 0.15),
+    ];
+
+    /// <summary>Single source of truth for "is this idea good": /ideas, /idea, autopilot.</summary>
+    public static IdeaScore Compute(
+        IReadOnlyDictionary<string, double>? skepticScores,
+        double skepticConfidence,
+        IReadOnlyDictionary<string, double>? researchScores,
+        double researchConfidence)
+    {
+        var useResearch = researchScores is { Count: > 0 };
+        var source = useResearch ? "research" : skepticScores is { Count: > 0 } ? "skeptic" : "none";
+        var confidence = Math.Clamp(useResearch ? researchConfidence : skepticConfidence, 0, 1);
+
+        var categories = new Dictionary<string, double>();
+        double sum = 0;
+        double weightSum = 0;
+        foreach (var (key, researchKey, skepticKey, weight) in Unified)
+        {
+            double? value = null;
+            if (useResearch && researchScores!.TryGetValue(researchKey, out var fromResearch))
+            {
+                value = fromResearch;
+            }
+            else if (skepticScores is not null && skepticScores.TryGetValue(skepticKey, out var fromSkeptic))
+            {
+                value = fromSkeptic;
+            }
+
+            if (value is { } present)
+            {
+                var clamped = Math.Clamp(present, 0, 1);
+                categories[key] = clamped;
+                sum += clamped * weight;
+                weightSum += weight;
+            }
+        }
+
+        if (weightSum == 0)
+        {
+            return IdeaScore.None with { Source = source, Confidence = confidence };
+        }
+
+        var total = Math.Round(sum / weightSum * (0.5 + 0.5 * confidence), 3);
+        return new IdeaScore(total, confidence, source, categories);
+    }
+
     private static readonly (string Key, double Weight)[] Weights =
     [
         ("demand", 0.35),
