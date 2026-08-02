@@ -49,29 +49,47 @@ public static class ServiceCollectionExtensions
     private static void AddAi(IServiceCollection services, IConfiguration configuration)
     {
         services.Configure<TriageOptions>(configuration.GetSection("IdeaEngine:Ai:Triage"));
+        services.Configure<IdeationOptions>(configuration.GetSection("IdeaEngine:Ai:Ideation"));
+        services.Configure<AiBudgetOptions>(configuration.GetSection("IdeaEngine:Ai:Budget"));
 
-        var openRouterKey = configuration["OPENROUTER_API_KEY"];
-        services
-            .AddHttpClient<OpenRouterTriageAnalyzer>(client =>
-            {
-                client.BaseAddress = new Uri(
-                    configuration["IdeaEngine:Ai:OpenRouterBaseUrl"] ?? "https://openrouter.ai/api/v1/");
-                client.Timeout = TimeSpan.FromSeconds(90);
-                if (!string.IsNullOrWhiteSpace(openRouterKey))
-                {
-                    client.DefaultRequestHeaders.Authorization =
-                        new AuthenticationHeaderValue("Bearer", openRouterKey);
-                }
-
-                // OpenRouter attribution headers (optional, recommended).
-                client.DefaultRequestHeaders.Add("HTTP-Referer", "https://github.com/Squikle/idea-engine");
-                client.DefaultRequestHeaders.Add("X-Title", "idea-engine");
-            })
-            .AddStandardResilienceHandler();
+        // LLM calls run far longer than the 10s default attempt timeout.
+        services.AddHttpClient<OpenRouterTriageAnalyzer>(
+                client => ConfigureOpenRouterClient(client, configuration))
+            .AddStandardResilienceHandler(ConfigureLlmResilience);
+        services.AddHttpClient<OpenRouterChatClient>(
+                client => ConfigureOpenRouterClient(client, configuration))
+            .AddStandardResilienceHandler(ConfigureLlmResilience);
 
         services.AddTransient<ITriageAnalyzer>(sp => sp.GetRequiredService<OpenRouterTriageAnalyzer>());
+        services.AddScoped<BudgetGuard>();
         services.AddScoped<TriageService>();
         services.AddSingleton<TriageCoordinator>();
+        services.AddScoped<Ideation.IdeationService>();
+    }
+
+    private static void ConfigureLlmResilience(Microsoft.Extensions.Http.Resilience.HttpStandardResilienceOptions options)
+    {
+        options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(100);
+        options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(110);
+        options.Retry.MaxRetryAttempts = 1;
+        options.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(220);
+    }
+
+    private static void ConfigureOpenRouterClient(HttpClient client, IConfiguration configuration)
+    {
+        client.BaseAddress = new Uri(
+            configuration["IdeaEngine:Ai:OpenRouterBaseUrl"] ?? "https://openrouter.ai/api/v1/");
+        client.Timeout = TimeSpan.FromSeconds(120);
+
+        var openRouterKey = configuration["OPENROUTER_API_KEY"];
+        if (!string.IsNullOrWhiteSpace(openRouterKey))
+        {
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", openRouterKey);
+        }
+
+        // OpenRouter attribution headers (optional, recommended).
+        client.DefaultRequestHeaders.Add("HTTP-Referer", "https://github.com/Squikle/idea-engine");
+        client.DefaultRequestHeaders.Add("X-Title", "idea-engine");
     }
 
     private static void AddTelegram(IServiceCollection services, IConfiguration configuration)

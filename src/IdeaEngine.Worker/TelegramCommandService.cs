@@ -3,6 +3,7 @@ using System.Text;
 using IdeaEngine.Core.Notifications;
 using IdeaEngine.Core.Pipeline;
 using IdeaEngine.Core.Sources;
+using IdeaEngine.Infrastructure.Ideation;
 using IdeaEngine.Infrastructure.Ingestion;
 using IdeaEngine.Infrastructure.Notifications;
 using IdeaEngine.Infrastructure.Persistence;
@@ -29,9 +30,16 @@ internal sealed class TelegramCommandService(
     IOptions<IngestionOptions> ingestionOptions,
     ILogger<TelegramCommandService> logger) : BackgroundService
 {
+    private readonly SemaphoreSlim _ideateGate = new(1, 1);
     private ITelegramBotClient? _bot;
     private long _adminChatId;
     private DateTimeOffset _startedAt;
+
+    public override void Dispose()
+    {
+        _ideateGate.Dispose();
+        base.Dispose();
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -89,6 +97,9 @@ internal sealed class TelegramCommandService(
                 new BotCommand { Command = "costs", Description = "AI spend, last 7 days" },
                 new BotCommand { Command = "collect", Description = "run a cycle now (optionally one source)" },
                 new BotCommand { Command = "analyze", Description = "run AI triage on the queue now" },
+                new BotCommand { Command = "ideate", Description = "AI builder-vs-skeptic idea sessions" },
+                new BotCommand { Command = "ideas", Description = "recent ideas (live and killed)" },
+                new BotCommand { Command = "advise", Description = "AI reviews our own pipeline for gaps" },
                 new BotCommand { Command = "config", Description = "current configuration" },
                 new BotCommand { Command = "help", Description = "command list" },
             ], cancellationToken: cancellationToken);
@@ -134,6 +145,9 @@ internal sealed class TelegramCommandService(
                 "costs" => await BuildCostsAsync(cancellationToken),
                 "collect" => StartCollect(argument),
                 "analyze" => StartAnalyze(),
+                "ideate" => StartIdeate(argument),
+                "advise" => StartAdvise(),
+                "ideas" => await BuildIdeasAsync(cancellationToken),
                 "config" => BuildConfig(),
                 "help" or "start" => BuildHelp(),
                 _ => $"Unknown command: /{command} — try /help",
@@ -411,6 +425,122 @@ internal sealed class TelegramCommandService(
         return "Analyzing the queue now…";
     }
 
+    private string StartIdeate(string? argument)
+    {
+        var count = 1;
+        if (argument is not null && (!int.TryParse(argument, out count) || count < 1))
+        {
+            return "Usage: /ideate [1-10]";
+        }
+
+        if (!_ideateGate.Wait(0))
+        {
+            return "Ideation is already running — results will arrive when it finishes.";
+        }
+
+        _ = Task.Run(
+            async () =>
+            {
+                try
+                {
+                    using var scope = scopeFactory.CreateScope();
+                    var ideation = scope.ServiceProvider.GetRequiredService<IdeationService>();
+                    var result = await ideation.RunProductSessionsAsync(count, CancellationToken.None);
+
+                    var builder = new StringBuilder("<b>Ideation finished</b>\n");
+                    foreach (var line in result.Lines)
+                    {
+                        builder.Append(System.Net.WebUtility.HtmlEncode(line)).Append('\n');
+                    }
+
+                    builder.Append('\n').Append(result.Advanced).Append(" advanced · ")
+                        .Append(result.Killed).Append(" killed · ")
+                        .Append(result.Errors).Append(" errors · $")
+                        .Append(result.CostUsd.ToString("F4", CultureInfo.InvariantCulture));
+                    if (result.StoppedReason is { } reason)
+                    {
+                        builder.Append("\nStopped: ").Append(System.Net.WebUtility.HtmlEncode(reason));
+                    }
+
+                    await notifier.SendAsync(builder.ToString(), CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Ideation batch failed");
+                    await notifier.SendAsync("Ideation crashed — check logs.", CancellationToken.None);
+                }
+                finally
+                {
+                    _ideateGate.Release();
+                }
+            },
+            CancellationToken.None);
+
+        return $"Running {Math.Clamp(count, 1, 10)} ideation session(s)… builder vs skeptic, grounded in your signals.";
+    }
+
+    private string StartAdvise()
+    {
+        if (!_ideateGate.Wait(0))
+        {
+            return "Ideation is already running — try again when it finishes.";
+        }
+
+        _ = Task.Run(
+            async () =>
+            {
+                try
+                {
+                    using var scope = scopeFactory.CreateScope();
+                    var ideation = scope.ServiceProvider.GetRequiredService<IdeationService>();
+                    var result = await ideation.RunMetaSessionAsync(CancellationToken.None);
+                    var message = result.StoppedReason is { } reason
+                        ? $"Advise stopped: {System.Net.WebUtility.HtmlEncode(reason)}"
+                        : result.Html;
+                    await notifier.SendAsync(message, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Meta advice session failed");
+                    await notifier.SendAsync("Advise crashed — check logs.", CancellationToken.None);
+                }
+                finally
+                {
+                    _ideateGate.Release();
+                }
+            },
+            CancellationToken.None);
+
+        return "Asking the advisor what our pipeline is missing…";
+    }
+
+    private async Task<string> BuildIdeasAsync(CancellationToken cancellationToken)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
+
+        var ideas = await db.Ideas
+            .OrderByDescending(i => i.Id)
+            .Take(12)
+            .ToListAsync(cancellationToken);
+
+        if (ideas.Count == 0)
+        {
+            return "No ideas yet — run /ideate to spin up sessions.";
+        }
+
+        var builder = new StringBuilder("<b>Recent ideas</b>\n");
+        foreach (var idea in ideas)
+        {
+            var marker = idea.Status == "candidate" ? "LIVE" : "dead";
+            builder.Append("• [").Append(marker).Append("] [").Append(idea.Category)
+                .Append("/e").Append(idea.EffortScale).Append("] ")
+                .Append(System.Net.WebUtility.HtmlEncode(idea.Title)).Append('\n');
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
     private string BuildConfig()
     {
         var config = ingestionOptions.Value;
@@ -436,6 +566,9 @@ internal sealed class TelegramCommandService(
         /collect — run a full cycle now
         /collect hn|4chan|bluesky|lemmy|reddit — one source only
         /analyze — run AI triage on queued items now
+        /ideate [n] — n builder-vs-skeptic idea sessions (default 1, max 10)
+        /ideas — recent ideas, live and killed
+        /advise — AI proposes pipeline/source improvements
         /config — current configuration
         """;
 

@@ -60,7 +60,7 @@ public sealed class TriageCoordinator(
 
                 if (capped)
                 {
-                    await NotifyCapOnceAsync(cancellationToken);
+                    await NotifyCapOnceAsync(round.StopReason, cancellationToken);
                     break;
                 }
 
@@ -96,7 +96,7 @@ public sealed class TriageCoordinator(
         }
     }
 
-    private async Task NotifyCapOnceAsync(CancellationToken cancellationToken)
+    private async Task NotifyCapOnceAsync(string? reason, CancellationToken cancellationToken)
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         if (_capNotifiedOn == today)
@@ -105,10 +105,9 @@ public sealed class TriageCoordinator(
         }
 
         _capNotifiedOn = today;
-        logger.LogWarning("Triage daily budget cap reached; paused until midnight UTC");
-        await notifier.SendAsync(
-            $"Triage paused: daily budget cap (${triageOptions.Value.DailyUsdCap}) reached. Resumes after midnight UTC.",
-            cancellationToken);
+        var detail = reason ?? $"daily cap ${triageOptions.Value.DailyUsdCap} reached";
+        logger.LogWarning("Triage paused by budget guard: {Reason}", detail);
+        await notifier.SendAsync($"Triage paused: {detail}. Resumes after midnight UTC.", cancellationToken);
     }
 
     public void Dispose() => _lock.Dispose();

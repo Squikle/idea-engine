@@ -11,7 +11,9 @@ using Microsoft.Extensions.Options;
 namespace IdeaEngine.Infrastructure.Triage;
 
 /// <summary>Outcome of one triage round.</summary>
-public sealed record TriageRoundResult(int Prefiltered, int Analyzed, int SignalsFound, decimal CostUsd, bool BudgetExhausted, int Queued);
+public sealed record TriageRoundResult(
+    int Prefiltered, int Analyzed, int SignalsFound, decimal CostUsd,
+    bool BudgetExhausted, int Queued, string? StopReason = null);
 
 /// <summary>
 /// One triage round: promote New items through the prefilter, then run a batch of
@@ -21,6 +23,7 @@ public sealed record TriageRoundResult(int Prefiltered, int Analyzed, int Signal
 public sealed class TriageService(
     IdeaEngineDbContext db,
     ITriageAnalyzer analyzer,
+    BudgetGuard budgetGuard,
     TimeProvider timeProvider,
     IOptions<TriageOptions> triageOptions,
     ILogger<TriageService> logger)
@@ -35,18 +38,19 @@ public sealed class TriageService(
 
         var prefiltered = await PromoteNewItemsAsync(cancellationToken);
 
-        var today = DateOnly.FromDateTime(timeProvider.GetUtcNow().UtcDateTime);
-        var spentToday = await db.AiLedger
-            .Where(e => e.Day == today && e.Stage == StageName)
-            .SumAsync(e => e.CostUsd, cancellationToken);
-
         var queued = await db.RawItems.CountAsync(
             r => r.Status == ItemStatus.PendingTriage, cancellationToken);
 
-        if (spentToday >= options.DailyUsdCap)
+        var worstCall = WorstCallUsd(options);
+        var check = await budgetGuard.CheckAsync(
+            StageName, options.DailyUsdCap, worstCall, worstCall * options.BatchSize, cancellationToken);
+        if (!check.Allowed)
         {
-            return new TriageRoundResult(prefiltered, 0, 0, 0, BudgetExhausted: true, queued);
+            return new TriageRoundResult(
+                prefiltered, 0, 0, 0, BudgetExhausted: true, queued, check.Reason);
         }
+
+        var today = DateOnly.FromDateTime(timeProvider.GetUtcNow().UtcDateTime);
 
         var batch = await db.RawItems
             .Where(r => r.Status == ItemStatus.PendingTriage)
@@ -187,4 +191,8 @@ public sealed class TriageService(
     private static decimal ComputeCost(TriageOutcome outcome, TriageOptions options) =>
         (outcome.TokensIn * options.InputPricePerMTok / 1_000_000m) +
         (outcome.TokensOut * options.OutputPricePerMTok / 1_000_000m);
+
+    private static decimal WorstCallUsd(TriageOptions options) =>
+        (4_000m * options.InputPricePerMTok
+            + options.MaxCompletionTokens * options.OutputPricePerMTok) / 1_000_000m;
 }

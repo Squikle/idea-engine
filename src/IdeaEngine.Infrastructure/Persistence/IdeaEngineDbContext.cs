@@ -14,6 +14,8 @@ public sealed class IdeaEngineDbContext(DbContextOptions<IdeaEngineDbContext> op
 
     public DbSet<SignalEntity> Signals => Set<SignalEntity>();
 
+    public DbSet<IdeaEntity> Ideas => Set<IdeaEntity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasPostgresExtension("vector");
@@ -69,6 +71,25 @@ public sealed class IdeaEngineDbContext(DbContextOptions<IdeaEngineDbContext> op
                 .WithMany()
                 .HasForeignKey(x => x.RawItemId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<IdeaEntity>(idea =>
+        {
+            idea.ToTable("ideas");
+            idea.HasIndex(x => x.CreatedAt);
+            idea.HasIndex(x => x.Status);
+            idea.Property(x => x.Title).HasMaxLength(300);
+            idea.Property(x => x.Category).HasMaxLength(32);
+            idea.Property(x => x.TargetUser).HasMaxLength(300);
+            idea.Property(x => x.Monetization).HasMaxLength(600);
+            idea.Property(x => x.DistributionNote).HasMaxLength(400);
+            idea.Property(x => x.Status).HasMaxLength(24);
+            idea.Property(x => x.EvidenceJson).HasColumnType("jsonb");
+            idea.Property(x => x.ScoresJson).HasColumnType("jsonb");
+            idea.Property(x => x.SkepticJson).HasColumnType("jsonb");
+            idea.Property(x => x.BuilderModel).HasMaxLength(128);
+            idea.Property(x => x.SkepticModel).HasMaxLength(128);
+            idea.Property(x => x.CostUsd).HasPrecision(10, 6);
         });
     }
 }

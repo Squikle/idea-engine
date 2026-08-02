@@ -1,0 +1,39 @@
+namespace IdeaEngine.Infrastructure.Ai;
+
+/// <summary>Bound from configuration section <c>IdeaEngine:Ai:Ideation</c>.</summary>
+public sealed class IdeationOptions
+{
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Proposes ideas. Strong model, cross-vendor with the skeptic on purpose.</summary>
+    public string BuilderModel { get; set; } = "anthropic/claude-sonnet-5";
+
+    public decimal BuilderInputPricePerMTok { get; set; } = 2.00m;
+
+    public decimal BuilderOutputPricePerMTok { get; set; } = 10.00m;
+
+    /// <summary>Attacks ideas. Different vendor reduces correlated blind spots.</summary>
+    public string SkepticModel { get; set; } = "deepseek/deepseek-v4-pro";
+
+    public decimal SkepticInputPricePerMTok { get; set; } = 0.43m;
+
+    public decimal SkepticOutputPricePerMTok { get; set; } = 0.87m;
+
+    /// <summary>Stage daily cap (stage name: "ideation").</summary>
+    public decimal DailyUsdCap { get; set; } = 3.00m;
+
+    /// <summary>Hard cap for /ideate argument.</summary>
+    public int MaxSessionsPerCommand { get; set; } = 10;
+
+    /// <summary>Signals sampled into each session's grounding (varied per session).</summary>
+    public int SignalsPerSession { get; set; } = 24;
+
+    /// <summary>Pool of best recent signals that sessions sample from.</summary>
+    public int SignalPoolSize { get; set; } = 80;
+
+    public double MinSignalConfidence { get; set; } = 0.35;
+
+    public int MaxCompletionTokens { get; set; } = 4000;
+
+    public string ReasoningEffort { get; set; } = "medium";
+}

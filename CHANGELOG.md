@@ -5,6 +5,24 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.4.0 — 2026-08-02
+
+- `/ideate [n]`: AI ideation sessions (1-10). Builder (claude-sonnet-5) proposes ONE
+  idea grounded in collected signals with mandatory citations; Skeptic
+  (deepseek-v4-pro, cross-vendor on purpose) attacks it; verdict stores the idea as
+  candidate or dismissed - both kept forever
+- `/advise`: meta session - AI reviews our own pipeline (sources, stages, stats)
+  and proposes overlooked sources/improvements; stored as `meta` ideas
+- `/ideas`: recent ideas, live and killed
+- `ideas` table (evidence, skeptic review, scores, per-idea cost)
+- BudgetGuard - financial firewall consulted before EVERY AI call: per-stage daily
+  caps + global daily cap ($5) + global monthly cap ($60) + per-call worst-case
+  ceiling ($0.15); block reasons surfaced in Telegram
+- Unvetted ideas are never advanced: skeptic failure = dismissed with reason
+- Generic OpenRouterChatClient; LLM-tuned resilience (default 10s attempt timeout
+  would have killed long sonnet calls)
+- Triage moved onto BudgetGuard; stop reasons in pause notifications
+
 ## 0.3.0 — 2026-08-02
 
 - Triage stage: gpt-5-nano via OpenRouter extracts product-opportunity signals
