@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using IdeaEngine.Core.Common;
 using IdeaEngine.Core.Notifications;
+using IdeaEngine.Core.Pipeline;
 using IdeaEngine.Infrastructure.Ai;
 using IdeaEngine.Infrastructure.Persistence;
 using IdeaEngine.Infrastructure.Persistence.Entities;
@@ -41,7 +42,11 @@ public sealed class IdeationService(
     private const string StageName = "ideation";
 
     public async Task<IdeationBatchResult> RunProductSessionsAsync(
-        int count, IProgressHandle? progress, CancellationToken cancellationToken)
+        int count, IProgressHandle? progress, CancellationToken cancellationToken) =>
+        await RunProductSessionsAsync(count, null, progress, cancellationToken);
+
+    public async Task<IdeationBatchResult> RunProductSessionsAsync(
+        int count, string? forcedPlaybook, IProgressHandle? progress, CancellationToken cancellationToken)
     {
         var options = ideationOptions.Value;
         count = Math.Clamp(count, 1, options.MaxSessionsPerCommand);
@@ -88,7 +93,10 @@ public sealed class IdeationService(
                     cancellationToken);
             }
 
-            var outcome = await RunSingleSessionAsync(pool, options, progress, session, count, cancellationToken);
+            var lenses = forcedPlaybook is { } forced && Playbooks.TryGet(forced, out var forcedLens)
+                ? (IReadOnlyList<Playbook>)[forcedLens]
+                : Playbooks.Sample(Random.Shared.Next(1, 3));
+            var outcome = await RunSingleSessionAsync(pool, options, lenses, progress, session, count, cancellationToken);
             totalCost += outcome.Cost;
 
             switch (outcome.Kind)
@@ -320,6 +328,7 @@ public sealed class IdeationService(
     private async Task<SessionOutcome> RunSingleSessionAsync(
         IReadOnlyList<GroundingSignal> pool,
         IdeationOptions options,
+        IReadOnlyList<Playbook> lenses,
         IProgressHandle? progress,
         int session,
         int count,
@@ -329,8 +338,11 @@ public sealed class IdeationService(
 
         // Vary grounding per session so ten sessions explore, not repeat.
         var sample = SampleSignals(pool, options.SignalsPerSession);
+        var lensBlock = "Session lenses (steer the idea through these):\n"
+            + string.Join('\n', lenses.Select(l => $"{l.Emoji} {l.Title}: {l.Guidance}"))
+            + "\n\n";
         var builderCompletion = await chat.CompleteAsync(
-            options.BuilderModel, IdeationPrompts.BuilderSystem, IdeationPrompts.BuildGrounding(sample),
+            options.BuilderModel, IdeationPrompts.BuilderSystem, lensBlock + IdeaEngine.Infrastructure.Ai.IdeationPrompts.BuildGrounding(sample),
             options.MaxCompletionTokens, options.ReasoningEffort, cancellationToken);
         cost += RecordLedger(options.BuilderModel, builderCompletion,
             options.BuilderInputPricePerMTok, options.BuilderOutputPricePerMTok);
@@ -392,15 +404,17 @@ public sealed class IdeationService(
             SkepticJson = review is null ? null : JsonSerializer.Serialize(review, LlmJson.Options),
             BuilderModel = options.BuilderModel,
             SkepticModel = options.SkepticModel,
+            Playbook = string.Join(' ', lenses.Select(l => l.Key)),
             CostUsd = cost,
             CreatedAt = timeProvider.GetUtcNow(),
         };
         db.Ideas.Add(entity);
         await db.SaveChangesAsync(cancellationToken);
 
+        var lensTag = string.Join('+', lenses.Select(l => l.Key));
         var line = advanced
-            ? $"🟢 #{entity.Id} [{entity.Category}/e{entity.EffortScale}] {entity.Title}"
-            : $"☠️ #{entity.Id} [{entity.Category}/e{entity.EffortScale}] {entity.Title} — {(killReason is null ? "skeptic said no" : TextClip.Clip(killReason, 90))}";
+            ? $"🟢 #{entity.Id} [{entity.Category}/e{entity.EffortScale}] ({lensTag}) {entity.Title}"
+            : $"☠️ #{entity.Id} [{entity.Category}/e{entity.EffortScale}] ({lensTag}) {entity.Title} — {(killReason is null ? "skeptic said no" : TextClip.Clip(killReason, 90))}";
 
         return new SessionOutcome(
             advanced ? SessionOutcomeKind.Advanced : SessionOutcomeKind.Killed, line, cost);
@@ -508,7 +522,8 @@ public sealed class IdeationService(
     private static string NormalizeCategory(string? category)
     {
         var value = category?.Trim().ToLowerInvariant();
-        return value is "saas" or "app" or "website" or "3dprint" or "hardware" or "wearable" or "service" or "content"
+        return value is "saas" or "app" or "website" or "3dprint" or "hardware" or "wearable"
+            or "service" or "content" or "reputation"
             ? value
             : "other";
     }

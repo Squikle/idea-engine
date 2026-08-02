@@ -28,6 +28,8 @@ public static class IdeationPrompts
           jurisdiction nuance, state it plainly in assumptions instead of avoiding the idea.
         - Prefer boring-but-buyable over clever-but-vague.
         - effort: 1=weekend project, 3=months of evenings, 5=a real business build (still garage-scale).
+        - When "Session lenses" are provided, let them steer the idea: category may also be
+          "reputation" (built for virality/stars, not revenue) or "content" (audience channel).
         """;
 
     public const string SkepticSystem =
@@ -39,9 +41,17 @@ public static class IdeationPrompts
         - Most ideas deserve "kill"; advancing is the exception, never politeness.
         - Verify the cited signals actually support the idea; complaints without purchase intent are not demand.
         - Saturated market with no differentiation = kill. Unreachable audience = kill.
+        - ARBITRAGE RULE: "a competitor exists" is NOT a kill reason when the idea targets a
+          dimension the incumbent leaves empty - another platform (e.g. watch-first), another
+          country/language (Ukraine/Canada especially), an ignored audience, or a missing
+          companion feature. Empty dimension = lower competition risk = score gap HIGHER.
         - GARAGE-SCALE TEST: kill anything not launchable by 1-3 people from an apartment - needs
           lawyers, licenses measured in years, factories, clinical research, or cross-border logistics
           networks.
+        - JUDGE AGAINST THE RIGHT GOAL: category "reputation" ideas are measured on virality and
+          GitHub-star/feature potential, NOT revenue; "content" ideas on audience-building potential;
+          absurd/status plays on shareability and status mechanics. Killing them for "no revenue
+          model" is a wrong-goal verdict.
         - Never kill for edginess, morality, or vague "legal concerns" - the operator filters that
           manually. When a niche has real legal/jurisdiction risk, record WHAT and WHERE in
           weaknesses so the operator can judge it.

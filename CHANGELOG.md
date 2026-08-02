@@ -5,6 +5,24 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.18.0 — 2026-08-02
+
+- Playbooks: operator wisdom as system behavior - 11 lenses (psych, absurd,
+  nostalgia, toolabuse, arbitrage, copycat, reputation, content, gamify,
+  gamble, pain); every ideation session auto-samples 1-2, /ideate 3 nostalgia
+  forces one, /playbooks lists them; used lenses stored on ideas and shown
+  in results and cards
+- ARBITRAGE lens corrected per operator: platform (Apple Watch, niche OS),
+  country/language (Ukraine/Canada first), audience, and missing-companion
+  gaps of PROVEN products; hard rule wired into skeptic AND judge - "a
+  competitor exists" is not a kill when the target dimension is uncaptured,
+  and competition_gap stays HIGH in that case
+- New idea categories: reputation (virality/stars metric) and content
+  (audience metric) with right-goal judging rules in skeptic and judge
+- Advocate receives the full lens list to fuel pivots
+- journal/idea-inbox.md rewritten: concrete droppable pitches only (12),
+  lenses are not inbox items
+
 ## 0.17.0 — 2026-08-02
 
 - Debate research: an ⚖️ ADVOCATE pass now builds the strongest case FOR every

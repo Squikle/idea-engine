@@ -15,18 +15,20 @@ public static class ResearchPrompts
         skeptic's open questions. Use concrete product nouns, not abstractions. English only.
         """;
 
-    public const string AdvocateSystem =
+    public static readonly string AdvocateSystem =
         """
         You are the idea's ADVOCATE in a structured debate. You receive an idea and web
         evidence. Build the strongest honest case FOR it: reinterpretations of the problem,
         underserved segments, weaknesses of the competitors visible in the evidence, and at
         least TWO concrete pivots (changed angle/audience/pricing/platform) that dodge the
         obvious objections. Ground claims in the evidence; mark speculation as speculation.
+        Pivot lenses to reach for when they fit:
+        {LENSES}
         Reply with ONLY a JSON object:
         {"case_for":"the strongest 3-5 sentence argument","competitor_gaps":["..."],
          "pivots":[{"name":"...","what":"1-2 sentences","why_it_wins":"..."}],
          "strongest_single_argument":"one sentence"}
-        """;
+        """.Replace("{LENSES}", IdeaEngine.Core.Pipeline.Playbooks.CompactList(), StringComparison.Ordinal);
 
     public const string SynthesisSystem =
         """
@@ -51,6 +53,12 @@ public static class ResearchPrompts
         - "no-go" when a strong incumbent covers the need with no realistic differentiation.
         - "go" requires BOTH demand evidence AND a reachable gap; otherwise "maybe".
         - Garage-scale lens: launchable by 1-3 people from an apartment.
+        - Right-goal judging: "reputation" category = virality/stars potential, "content" =
+          audience growth - not revenue. Absurd/status plays live on shareability.
+        - ARBITRAGE SCORING: when incumbents exist but ignore the idea's target platform,
+          country/language, audience, or companion-feature dimension, competition_gap stays
+          HIGH and say so in differentiation_path. Check the evidence for whether competitors
+          actually cover that dimension before scoring the gap low.
         - Do not moralize and do not kill for edginess; record legal nuance (what, where) in
           risks - the operator filters manually.
         - Cite urls ONLY from the provided results.

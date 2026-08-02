@@ -99,7 +99,8 @@ internal sealed class TelegramCommandService(
                 new BotCommand { Command = "costs", Description = "AI spend, last 7 days" },
                 new BotCommand { Command = "collect", Description = "run a cycle now (optionally one source)" },
                 new BotCommand { Command = "analyze", Description = "run AI triage on the queue now" },
-                new BotCommand { Command = "ideate", Description = "AI builder-vs-skeptic idea sessions" },
+                new BotCommand { Command = "ideate", Description = "AI idea sessions (optional playbook lens)" },
+                new BotCommand { Command = "playbooks", Description = "strategic lenses the machine uses" },
                 new BotCommand { Command = "drop", Description = "submit YOUR idea: shape, skeptic, web research" },
                 new BotCommand { Command = "research", Description = "web-research a candidate idea" },
                 new BotCommand { Command = "queue", Description = "jobs: running, waiting, failed" },
@@ -164,6 +165,7 @@ internal sealed class TelegramCommandService(
                 "costs" => await BuildCostsAsync(cancellationToken),
                 "collect" => StartCollect(argument),
                 "analyze" => StartAnalyze(),
+                "playbooks" => BuildPlaybooks(),
                 "ideate" => StartIdeate(argument),
                 "drop" => await StartDropAsync(argument, cancellationToken),
                 "research" => await StartResearchAsync(argument, cancellationToken),
@@ -497,12 +499,45 @@ internal sealed class TelegramCommandService(
         return "🧠 Analyzing the queue now…";
     }
 
+    private static string BuildPlaybooks()
+    {
+        var builder = new StringBuilder("<b>📚 Playbooks</b> — lenses the machine thinks through\n");
+        builder.Append("<i>Rotation: every ideation session samples 1-2 automatically. ")
+            .Append("Force one: /ideate 3 nostalgia</i>\n\n");
+        foreach (var playbook in IdeaEngine.Core.Pipeline.Playbooks.All)
+        {
+            builder.Append(playbook.Emoji).Append(" <code>").Append(playbook.Key).Append("</code> — <b>")
+                .Append(playbook.Title).Append("</b>\n")
+                .Append(System.Net.WebUtility.HtmlEncode(playbook.Guidance)).Append("\n\n");
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
     private string StartIdeate(string? argument)
     {
         var count = 1;
-        if (argument is not null && (!int.TryParse(argument, out count) || count < 1))
+        string? playbookKey = null;
+        foreach (var token in (argument ?? string.Empty)
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            return "Usage: /ideate [1-10]";
+            if (int.TryParse(token, out var parsedCount))
+            {
+                count = parsedCount;
+            }
+            else if (IdeaEngine.Core.Pipeline.Playbooks.TryGet(token, out var lens))
+            {
+                playbookKey = lens.Key;
+            }
+            else
+            {
+                return $"Unknown playbook '{token}' — /playbooks lists them. Usage: /ideate 3 nostalgia";
+            }
+        }
+
+        if (count < 1)
+        {
+            return "Usage: /ideate [1-10] [playbook]";
         }
 
         if (!OperationGates.Ideation.Wait(0))
@@ -517,11 +552,14 @@ internal sealed class TelegramCommandService(
                 try
                 {
                     var progress = await progressNotifier.StartAsync(
-                        $"💡 Ideation · starting {sessions} session(s)…", CancellationToken.None);
+                        playbookKey is null
+                            ? $"💡 Ideation · {sessions} session(s), rotating lenses…"
+                            : $"💡 Ideation · {sessions} session(s) through the {playbookKey} lens…",
+                        CancellationToken.None);
 
                     using var scope = scopeFactory.CreateScope();
                     var ideation = scope.ServiceProvider.GetRequiredService<IdeationService>();
-                    var result = await ideation.RunProductSessionsAsync(sessions, progress, CancellationToken.None);
+                    var result = await ideation.RunProductSessionsAsync(sessions, playbookKey, progress, CancellationToken.None);
 
                     await progress.CompleteAsync(
                         $"Ideation done · {result.Advanced} live · {result.Killed} killed · " +
@@ -1269,7 +1307,9 @@ internal sealed class TelegramCommandService(
         builder.Append(IdeaEngine.Core.Common.Ui.IdeaStatus(idea.Status)).Append(" <b>#").Append(idea.Id).Append(" · ")
             .Append(System.Net.WebUtility.HtmlEncode(idea.Title)).Append("</b>\n")
             .Append(idea.Status).Append(" · ")
-            .Append(idea.Category).Append(" · effort ").Append(idea.EffortScale).Append('\n');
+            .Append(idea.Category).Append(" · effort ").Append(idea.EffortScale)
+            .Append(idea.Playbook is { Length: > 0 } ? $" · 📚 {idea.Playbook}" : string.Empty)
+            .Append('\n');
 
         var score = IdeaJson.ComputeScore(idea, researchReport);
         if (score.Source != "none")
@@ -1470,7 +1510,8 @@ internal sealed class TelegramCommandService(
         <b>Run</b>
         /collect — fetch all sources now (or: <code>/collect hn</code>, 4chan, bluesky, lemmy, reddit)
         /analyze — AI triage of queued items
-        /ideate 3 — AI builder-vs-skeptic sessions from your signals
+        /ideate 3 — AI sessions, rotating playbook lenses · /ideate 3 nostalgia — force one
+        /playbooks — the lens list (psych, absurd, nostalgia, copycat…)
         /drop your pitch here — YOUR idea: shaped → skeptic → web research
         /research 20 21 24 — web-validate one or several ideas
         /kill 5 · /promote 5 — override any verdict with YOUR decision
