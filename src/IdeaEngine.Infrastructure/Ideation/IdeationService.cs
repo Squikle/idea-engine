@@ -160,11 +160,23 @@ public sealed class IdeationService(
             options.BuilderInputPricePerMTok, options.BuilderOutputPricePerMTok);
 
         var idea = LlmJson.TryParse<BuilderIdeaDto>(shaping?.Content);
+        if (idea is null && LlmDiag.IsTruncation(shaping))
+        {
+            // The reply outgrew the budget - one retry with headroom fixes most of these.
+            shaping = await chat.CompleteAsync(
+                options.BuilderModel, IdeationPrompts.OperatorIdeaSystem, pitch,
+                (int)(options.MaxCompletionTokens * 1.5), options.ReasoningEffort, cancellationToken);
+            cost += RecordLedger(options.BuilderModel, shaping,
+                options.BuilderInputPricePerMTok, options.BuilderOutputPricePerMTok);
+            idea = LlmJson.TryParse<BuilderIdeaDto>(shaping?.Content);
+        }
+
         if (idea is null || string.IsNullOrWhiteSpace(idea.Title))
         {
             await db.SaveChangesAsync(cancellationToken);
-            await statusTracker.EndAsync(Tracks.Ideate, "drop ⛔ unparseable", CancellationToken.None);
-            return new OperatorIdeaResult(null, null, string.Empty, cost, "could not shape the pitch (model output unparseable)");
+            var diag = LlmDiag.Describe(shaping);
+            await statusTracker.EndAsync(Tracks.Ideate, "drop ⛔ model failure", CancellationToken.None);
+            return new OperatorIdeaResult(null, null, string.Empty, cost, $"shaping failed — {diag}");
         }
 
         if (progress is not null)
@@ -501,7 +513,7 @@ public sealed class IdeationService(
     private decimal RecordLedger(
         string model, ChatCompletion? completion, decimal inPricePerMTok, decimal outPricePerMTok)
     {
-        if (completion is null)
+        if (completion is null || completion.IsError)
         {
             return 0;
         }

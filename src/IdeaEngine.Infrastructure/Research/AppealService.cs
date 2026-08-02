@@ -122,7 +122,7 @@ public sealed class AppealService(
             options.MaxCompletionTokens, "medium", cancellationToken);
 
         decimal cost = 0;
-        if (completion is not null)
+        if (completion is { IsError: false })
         {
             cost = (completion.TokensIn * options.InputPricePerMTok
                 + completion.TokensOut * options.OutputPricePerMTok) / 1_000_000m;

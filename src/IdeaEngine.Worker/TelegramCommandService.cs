@@ -444,6 +444,22 @@ internal sealed class TelegramCommandService(
         builder.Append("\nTotal: $")
             .Append(rows.Sum(r => r.Cost).ToString("F4", CultureInfo.InvariantCulture));
 
+        var credits = await scope.ServiceProvider
+            .GetRequiredService<IdeaEngine.Infrastructure.Ai.OpenRouterChatClient>()
+            .GetCreditsAsync(cancellationToken);
+        if (credits is { } wallet)
+        {
+            var remaining = wallet.Total - wallet.Used;
+            builder.Append("\n\n🏦 <b>OpenRouter wallet:</b> $")
+                .Append(remaining.ToString("F2", CultureInfo.InvariantCulture))
+                .Append(" left of $").Append(wallet.Total.ToString("F2", CultureInfo.InvariantCulture))
+                .Append(" deposited");
+            if (remaining < 2)
+            {
+                builder.Append(" — <b>top up soon</b> (openrouter.ai → Credits)");
+            }
+        }
+
         return builder.ToString();
     }
 

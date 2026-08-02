@@ -164,7 +164,7 @@ public sealed class AuditService(
             ReflectSystem + "\nReply with ONLY {\"reflection\":\"...\"}",
             stats, 600, "low", cancellationToken);
 
-        if (completion is not null)
+        if (completion is { IsError: false })
         {
             db.AiLedger.Add(new AiLedgerEntry
             {

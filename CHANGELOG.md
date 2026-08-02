@@ -5,6 +5,23 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.24.1 — 2026-08-02
+
+- "model output unparseable" is dead vocabulary. Every AI failure now says WHAT
+  and WHAT TO DO: HTTP status + provider message ("HTTP 402 Insufficient
+  credits — top up at openrouter.ai → Credits"), truncation ("cut at N tokens,
+  finish=length"), or a preview of the non-JSON reply. Root cause of today's
+  incident: the OpenRouter prepaid balance ran dry and the client reported the
+  402 refusals as parse failures
+- Credit exhaustion (402) is now its own flow: jobs go ⏸ held with a dedicated
+  card explaining it's the WALLET, not our caps (no bump button - bumping can't
+  help), with a "topped up — resume all" button; re-probes every 4h regardless
+- Truncated replies auto-retry once with a 1.5x token budget (shaping, research
+  synthesis, dig mapping)
+- Error completions never pollute the ledger (0-token rows suppressed)
+- /costs shows the live OpenRouter wallet: $ left of $ deposited, with a
+  top-up warning under $2
+
 ## 0.24.0 — 2026-08-02
 
 - Budget stops no longer fail jobs: they go ⏸ HELD and AUTO-RESUME at cap reset

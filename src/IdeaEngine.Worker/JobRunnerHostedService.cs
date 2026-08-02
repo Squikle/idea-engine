@@ -28,6 +28,9 @@ internal sealed class JobRunnerHostedService(
     /// <summary>One coalesced budget card per day - not one per starved job.</summary>
     private DateOnly _capCardShownOn;
 
+    /// <summary>Same coalescing for OpenRouter credit exhaustion (different remedy).</summary>
+    private DateOnly _creditCardShownOn;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await Task.Delay(TimeSpan.FromSeconds(8), stoppingToken);
@@ -412,6 +415,56 @@ internal sealed class JobRunnerHostedService(
     private async Task HandleStopAsync(
         JobEntity job, long? ideaId, string reason, IProgressHandle progress, CancellationToken cancellationToken)
     {
+        // Provider wallet empty (HTTP 402) is NOT our cap - bumping can't help, only a top-up.
+        var isCredit = reason.Contains("402", StringComparison.Ordinal)
+            || reason.Contains("credit", StringComparison.OrdinalIgnoreCase);
+        if (isCredit)
+        {
+            var retryAt = DateTimeOffset.UtcNow.AddHours(4); // probe again even without a top-up
+            using (var scope = scopeFactory.CreateScope())
+            {
+                await scope.ServiceProvider.GetRequiredService<JobService>()
+                    .HoldAsync(job.Id, retryAt, reason, cancellationToken);
+            }
+
+            await progress.CompleteAsync(
+                "⏸ held · OpenRouter credit balance is empty — top up, then tap resume",
+                CancellationToken.None);
+
+            var creditToday = DateOnly.FromDateTime(DateTime.UtcNow);
+            if (_creditCardShownOn != creditToday)
+            {
+                _creditCardShownOn = creditToday;
+                var creditBot = serviceProvider.GetService<Telegram.Bot.ITelegramBotClient>();
+                var creditTelegram = serviceProvider.GetService<IdeaEngine.Infrastructure.Notifications.TelegramOptions>();
+                if (creditBot is not null && creditTelegram is { IsConfigured: true })
+                {
+                    try
+                    {
+                        await creditBot.SendMessage(
+                            chatId: creditTelegram.AdminChatId!.Value,
+                            text: "🏦 <b>OpenRouter prepaid balance is EMPTY</b> — every model call returns 402.\n" +
+                                "This is not our daily cap: bumping won't help and there is no automatic reset.\n" +
+                                "Fix: openrouter.ai → <b>Credits</b> → add funds (consider auto-top-up). " +
+                                "Jobs are held; after topping up tap resume:",
+                            parseMode: Telegram.Bot.Types.Enums.ParseMode.Html,
+                            replyMarkup: new Telegram.Bot.Types.ReplyMarkups.InlineKeyboardMarkup(
+                            [
+                                [Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton.WithCallbackData(
+                                    "▶️ topped up — resume all", "job|releaseheld|0")],
+                            ]),
+                            cancellationToken: cancellationToken);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        logger.LogWarning(ex, "Credit card send failed");
+                    }
+                }
+            }
+
+            return;
+        }
+
         var isBudget = reason.Contains("cap", StringComparison.OrdinalIgnoreCase);
         if (!isBudget)
         {

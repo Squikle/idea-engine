@@ -267,7 +267,7 @@ public sealed class DigService(
 
     private decimal RecordLedger(ChatCompletion? completion, DigOptions options)
     {
-        if (completion is null)
+        if (completion is null || completion.IsError)
         {
             return 0;
         }

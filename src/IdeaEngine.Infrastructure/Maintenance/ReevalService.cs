@@ -219,7 +219,7 @@ public sealed class ReevalService(
 
         var completion = await chat.CompleteAsync(
             nano.Model, ScreenSystem, digest.ToString(), 900, "low", cancellationToken);
-        if (completion is not null)
+        if (completion is { IsError: false })
         {
             db.AiLedger.Add(new AiLedgerEntry
             {

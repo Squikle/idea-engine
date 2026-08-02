@@ -182,6 +182,7 @@ public sealed class ResearchService(
 
         // Synthesis rounds until closure or MaxRounds.
         ResearchReportDto? report = null;
+        string? lastSynthesisDiag = null;
         var rounds = 0;
         while (rounds < Math.Max(1, options.MaxRounds))
         {
@@ -193,9 +194,12 @@ public sealed class ResearchService(
                     cancellationToken);
             }
 
-            report = await SynthesizeAsync(ideaContext, blocks, pageExcerpts, options, c => cost += c, cancellationToken);
+            string? synthesisDiag;
+            (report, synthesisDiag) = await SynthesizeAsync(
+                ideaContext, blocks, pageExcerpts, options, c => cost += c, cancellationToken);
             if (report is null)
             {
+                lastSynthesisDiag = synthesisDiag;
                 break;
             }
 
@@ -249,7 +253,7 @@ public sealed class ResearchService(
         if (report is null)
         {
             await db.SaveChangesAsync(cancellationToken);
-            return Stopped("synthesis returned unparseable output");
+            return Stopped($"synthesis failed — {lastSynthesisDiag ?? "unknown model failure"}");
         }
 
         var verdict = NormalizeVerdict(report.Verdict);
@@ -322,7 +326,7 @@ public sealed class ResearchService(
         return used;
     }
 
-    private async Task<ResearchReportDto?> SynthesizeAsync(
+    private async Task<(ResearchReportDto? Report, string? Diag)> SynthesizeAsync(
         string ideaContext,
         List<(string Query, IReadOnlyList<SearchHit> Hits)> blocks,
         List<(string Url, string Excerpt)> pageExcerpts,
@@ -330,22 +334,29 @@ public sealed class ResearchService(
         Action<decimal> addCost,
         CancellationToken cancellationToken)
     {
+        ChatCompletion? last = null;
+        var tokenBudget = options.MaxCompletionTokens;
         for (var attempt = 1; attempt <= 2; attempt++)
         {
-            var completion = await chat.CompleteAsync(
+            last = await chat.CompleteAsync(
                 options.Model, ResearchPrompts.SynthesisSystem,
                 ResearchPrompts.BuildSynthesisMessage(ideaContext, blocks, pageExcerpts),
-                options.MaxCompletionTokens, options.ReasoningEffort, cancellationToken);
-            addCost(RecordLedger(completion, options));
+                tokenBudget, options.ReasoningEffort, cancellationToken);
+            addCost(RecordLedger(last, options));
 
-            var parsed = LlmJson.TryParse<ResearchReportDto>(completion?.Content);
+            var parsed = LlmJson.TryParse<ResearchReportDto>(last?.Content);
             if (parsed is not null)
             {
-                return parsed;
+                return (parsed, null);
+            }
+
+            if (LlmDiag.IsTruncation(last))
+            {
+                tokenBudget = (int)(tokenBudget * 1.5); // retry with headroom
             }
         }
 
-        return null;
+        return (null, LlmDiag.Describe(last));
     }
 
     private static List<string> UnansweredQuestions(
@@ -391,7 +402,7 @@ public sealed class ResearchService(
 
     private decimal RecordLedger(ChatCompletion? completion, ResearchOptions options)
     {
-        if (completion is null)
+        if (completion is null || completion.IsError)
         {
             return 0;
         }

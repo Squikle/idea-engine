@@ -64,7 +64,7 @@ public sealed class GlanceService(
             options.Model, SystemPrompt, BuildUserMessage(missing),
             options.MaxCompletionTokens, "low", cancellationToken);
 
-        if (completion is not null)
+        if (completion is { IsError: false })
         {
             db.AiLedger.Add(new AiLedgerEntry
             {

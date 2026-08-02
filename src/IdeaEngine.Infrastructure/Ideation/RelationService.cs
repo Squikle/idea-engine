@@ -82,7 +82,7 @@ public sealed class RelationService(
         var completion = await chat.CompleteAsync(
             options.Model, SystemPrompt, user, 800, "low", cancellationToken);
 
-        if (completion is not null)
+        if (completion is { IsError: false })
         {
             db.AiLedger.Add(new AiLedgerEntry
             {
