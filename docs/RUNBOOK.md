@@ -86,6 +86,19 @@ docker compose down                      # stop (data persists in named volume)
 docker volume rm idea-engine_pgdata      # DESTROY all data (careful)
 ```
 
+### Migrations (EF Core, local tool)
+
+```bash
+dotnet ef migrations add <Name> --project src/IdeaEngine.Infrastructure
+
+# Apply. NOTE: plain `source .env` is NOT enough - it creates unexported shell vars
+# that child processes (dotnet) never see. Use set -a to auto-export:
+set -a; source .env; set +a
+dotnet ef database update --project src/IdeaEngine.Infrastructure
+```
+
+Generated migration files are analyzer-exempt via `src/IdeaEngine.Infrastructure/Migrations/.editorconfig`.
+
 ### Backup / restore (activated in Phase 4; design ready)
 
 - Nightly `pg_dump | gzip` to `./backups` (7 daily / 4 weekly rotation) via a compose

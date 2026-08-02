@@ -1,3 +1,4 @@
+using IdeaEngine.Infrastructure;
 using IdeaEngine.Worker;
 using Serilog;
 
@@ -8,6 +9,8 @@ Log.Logger = new LoggerConfiguration()
 
 try
 {
+    DotEnv.Load();
+
     var builder = Host.CreateApplicationBuilder(args);
 
     builder.Services.AddSerilog((services, loggerConfiguration) => loggerConfiguration
@@ -15,6 +18,7 @@ try
         .ReadFrom.Services(services)
         .Enrich.FromLogContext());
 
+    builder.Services.AddIdeaEngineInfrastructure(builder.Configuration);
     builder.Services.AddHostedService<StartupSummaryService>();
 
     var host = builder.Build();
