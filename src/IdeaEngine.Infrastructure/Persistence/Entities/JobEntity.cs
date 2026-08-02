@@ -22,6 +22,10 @@ public sealed class JobEntity
 
     public string? LastError { get; set; }
 
+    /// <summary>Telegram message id of the queue-ack; progress replies to it so the
+    /// owner can tap through from ack to the live log.</summary>
+    public int? OriginMessageId { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
 
     public DateTimeOffset UpdatedAt { get; set; }

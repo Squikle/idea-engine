@@ -17,21 +17,35 @@ public sealed record ResearchJobPayload(
 /// <summary>Enqueue/claim/checkpoint operations for the durable job queue.</summary>
 public sealed class JobService(IdeaEngineDbContext db, TimeProvider timeProvider)
 {
-    public async Task<long> EnqueueAsync<T>(string kind, T payload, CancellationToken cancellationToken)
+    public async Task<(long JobId, int Position)> EnqueueAsync<T>(
+        string kind, T payload, int? originMessageId, CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
+        var ahead = await db.Jobs.CountAsync(
+            j => j.Status == "queued" || j.Status == "running", cancellationToken);
         var job = new JobEntity
         {
             Kind = kind,
             PayloadJson = JsonSerializer.Serialize(payload, LlmJson.Options),
             Status = "queued",
+            OriginMessageId = originMessageId,
             CreatedAt = now,
             UpdatedAt = now,
         };
         db.Jobs.Add(job);
         await db.SaveChangesAsync(cancellationToken);
-        return job.Id;
+        return (job.Id, ahead + 1);
     }
+
+    public async Task<bool> RetryAsync(long jobId, CancellationToken cancellationToken) =>
+        await db.Jobs
+            .Where(j => j.Id == jobId && (j.Status == "failed" || j.Status == "done"))
+            .ExecuteUpdateAsync(
+                s => s.SetProperty(j => j.Status, "queued")
+                    .SetProperty(j => j.Attempts, 0)
+                    .SetProperty(j => j.LastError, (string?)null)
+                    .SetProperty(j => j.UpdatedAt, timeProvider.GetUtcNow()),
+                cancellationToken) > 0;
 
     /// <summary>Startup recovery: anything left "running" by a dead process goes back to the queue.</summary>
     public async Task<int> RecoverInterruptedAsync(CancellationToken cancellationToken) =>

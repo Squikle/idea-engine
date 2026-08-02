@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Telegram.Bot;
 using IdeaEngine.Core.Notifications;
 using IdeaEngine.Infrastructure.Ai;
 using IdeaEngine.Infrastructure.Ideation;
@@ -15,6 +16,7 @@ namespace IdeaEngine.Worker;
 /// </summary>
 internal sealed class JobRunnerHostedService(
     IServiceScopeFactory scopeFactory,
+    IServiceProvider serviceProvider,
     ResearchCoordinator researchCoordinator,
     IProgressNotifier progressNotifier,
     INotifier notifier,
@@ -119,6 +121,7 @@ internal sealed class JobRunnerHostedService(
             resumed
                 ? $"📦 Drop (job #{job.Id}) · resuming at research for idea #{payload.IdeaId}…"
                 : $"📦 Drop (job #{job.Id}) · shaping your pitch…",
+            job.OriginMessageId,
             cancellationToken);
 
         var ideaId = payload.IdeaId;
@@ -134,6 +137,7 @@ internal sealed class JobRunnerHostedService(
                 if (shaped.StoppedReason is { } reason)
                 {
                     await progress.CompleteAsync($"⛔ Drop stopped · {reason}", CancellationToken.None);
+                    await FailWithButtonsAsync(job, null, reason, cancellationToken);
                     return;
                 }
 
@@ -165,6 +169,7 @@ internal sealed class JobRunnerHostedService(
         if (result.StoppedReason is { } stopped)
         {
             await progress.CompleteAsync($"⛔ research stopped: {stopped}", CancellationToken.None);
+            await FailWithButtonsAsync(job, ideaId, stopped, cancellationToken);
             return;
         }
 
@@ -179,7 +184,7 @@ internal sealed class JobRunnerHostedService(
             ?? throw new InvalidOperationException("research payload unreadable");
 
         var progress = await progressNotifier.StartAsync(
-            $"🔎 Research #{payload.IdeaId} (job #{job.Id}) · preparing…", cancellationToken);
+            $"🔎 Research #{payload.IdeaId} (job #{job.Id}) · preparing…", job.OriginMessageId, cancellationToken);
 
         var result = await researchCoordinator.RunAsync(payload.IdeaId, progress, wait: true, cancellationToken);
         if (result is null)
@@ -190,12 +195,56 @@ internal sealed class JobRunnerHostedService(
         if (result.StoppedReason is { } reason)
         {
             await progress.CompleteAsync($"⛔ stopped · {reason}", CancellationToken.None);
+            await FailWithButtonsAsync(job, payload.IdeaId, reason, cancellationToken);
             return;
         }
 
         await progress.CompleteAsync(
             $"✅ done · {result.Verdict?.ToUpperInvariant()} · report below", CancellationToken.None);
         await notifier.SendAsync(result.Html, cancellationToken);
+    }
+
+    /// <summary>Marks the job failed and posts an actionable card: retry, and +$5 when it was a budget cap.</summary>
+    private async Task FailWithButtonsAsync(
+        JobEntity job, long? ideaId, string reason, CancellationToken cancellationToken)
+    {
+        await FinishAsync(job.Id, error: reason, cancellationToken);
+
+        var bot = serviceProvider.GetService<Telegram.Bot.ITelegramBotClient>();
+        var telegram = serviceProvider.GetService<IdeaEngine.Infrastructure.Notifications.TelegramOptions>();
+        if (bot is null || telegram is not { IsConfigured: true })
+        {
+            return;
+        }
+
+        var buttons = new List<Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton>
+        {
+            Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton.WithCallbackData(
+                $"🔁 Retry job #{job.Id}", $"job|retry|{job.Id}"),
+        };
+        if (reason.Contains("cap", StringComparison.OrdinalIgnoreCase))
+        {
+            buttons.Add(Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton.WithCallbackData(
+                "💸 +$5 today", $"budget|bump|{job.Id}"));
+        }
+
+        var ideaPart = ideaId is { } id ? $" · idea #{id} (/idea {id})" : string.Empty;
+        try
+        {
+            await bot.SendMessage(
+                chatId: telegram.AdminChatId!.Value,
+                text: $"⛔ <b>Job #{job.Id} stopped</b>{ideaPart}\n{System.Net.WebUtility.HtmlEncode(reason)}",
+                parseMode: Telegram.Bot.Types.Enums.ParseMode.Html,
+                replyParameters: job.OriginMessageId is { } origin
+                    ? new Telegram.Bot.Types.ReplyParameters { MessageId = origin }
+                    : null,
+                replyMarkup: new Telegram.Bot.Types.ReplyMarkups.InlineKeyboardMarkup(buttons),
+                cancellationToken: cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Failure card send failed");
+        }
     }
 
     private async Task FinishAsync(long jobId, string? error, CancellationToken cancellationToken)

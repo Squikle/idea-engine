@@ -1,4 +1,6 @@
+using System.Globalization;
 using IdeaEngine.Infrastructure.Persistence;
+using IdeaEngine.Infrastructure.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -24,6 +26,49 @@ public sealed class BudgetGuard(
 {
     /// <param name="worstCallUsd">Worst-case cost of a single upcoming call (sanity ceiling).</param>
     /// <param name="plannedSpendUsd">Worst-case cost of the whole upcoming batch (cap projection).</param>
+    private const string BumpKeyPrefix = "budget_bump:";
+
+    /// <summary>Owner-triggered temporary raise: adds to today's stage AND global daily caps
+    /// (the monthly cap stays a hard ceiling on purpose). Returns the new total bump.</summary>
+    public async Task<decimal> BumpTodayAsync(decimal amount, CancellationToken cancellationToken)
+    {
+        var key = BumpKeyPrefix + DateOnly.FromDateTime(timeProvider.GetUtcNow().UtcDateTime)
+            .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var state = await db.AppState.FindAsync([key], cancellationToken);
+        var total = amount + (state is null
+            ? 0
+            : decimal.TryParse(state.Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var v) ? v : 0);
+
+        if (state is null)
+        {
+            db.AppState.Add(new AppStateEntity
+            {
+                Key = key,
+                Value = total.ToString(CultureInfo.InvariantCulture),
+                UpdatedAt = timeProvider.GetUtcNow(),
+            });
+        }
+        else
+        {
+            state.Value = total.ToString(CultureInfo.InvariantCulture);
+            state.UpdatedAt = timeProvider.GetUtcNow();
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+        return total;
+    }
+
+    public async Task<decimal> GetTodayBumpAsync(CancellationToken cancellationToken)
+    {
+        var key = BumpKeyPrefix + DateOnly.FromDateTime(timeProvider.GetUtcNow().UtcDateTime)
+            .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var state = await db.AppState.FindAsync([key], cancellationToken);
+        return state is not null
+            && decimal.TryParse(state.Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var v)
+            ? v
+            : 0;
+    }
+
     public async Task<BudgetCheck> CheckAsync(
         string stage,
         decimal stageDailyCap,
@@ -32,6 +77,9 @@ public sealed class BudgetGuard(
         CancellationToken cancellationToken)
     {
         var options = budgetOptions.Value;
+        var bump = await GetTodayBumpAsync(cancellationToken);
+        stageDailyCap += bump;
+        var globalDailyCap = options.GlobalDailyUsdCap + bump;
         var today = DateOnly.FromDateTime(timeProvider.GetUtcNow().UtcDateTime);
         var monthStart = new DateOnly(today.Year, today.Month, 1);
 
@@ -54,9 +102,9 @@ public sealed class BudgetGuard(
         {
             reason = $"stage '{stage}' daily cap ${stageDailyCap:F2} reached (spent ${stageToday:F2})";
         }
-        else if (globalToday + plannedSpendUsd > options.GlobalDailyUsdCap)
+        else if (globalToday + plannedSpendUsd > globalDailyCap)
         {
-            reason = $"global daily cap ${options.GlobalDailyUsdCap:F2} reached (spent ${globalToday:F2})";
+            reason = $"global daily cap ${globalDailyCap:F2} reached (spent ${globalToday:F2})";
         }
         else if (globalMonth + plannedSpendUsd > options.GlobalMonthlyUsdCap)
         {

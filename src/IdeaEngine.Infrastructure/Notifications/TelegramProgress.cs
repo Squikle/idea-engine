@@ -13,7 +13,11 @@ public sealed class TelegramProgressNotifier(
     TimeProvider timeProvider,
     ILogger<TelegramProgressNotifier> logger) : IProgressNotifier
 {
-    public async Task<IProgressHandle> StartAsync(string text, CancellationToken cancellationToken)
+    public Task<IProgressHandle> StartAsync(string text, CancellationToken cancellationToken) =>
+        StartAsync(text, null, cancellationToken);
+
+    public async Task<IProgressHandle> StartAsync(
+        string text, int? replyToMessageId, CancellationToken cancellationToken)
     {
         try
         {
@@ -21,6 +25,9 @@ public sealed class TelegramProgressNotifier(
                 chatId: adminChatId,
                 text: text,
                 parseMode: ParseMode.Html,
+                replyParameters: replyToMessageId is { } replyId
+                    ? new Telegram.Bot.Types.ReplyParameters { MessageId = replyId }
+                    : null,
                 linkPreviewOptions: Telegram.Bot.Types.LinkPreviewOptions.Disabled,
                 cancellationToken: cancellationToken);
 
@@ -162,6 +169,9 @@ internal sealed class TelegramProgressHandle : IProgressHandle
 public sealed class NullProgressNotifier : IProgressNotifier
 {
     public Task<IProgressHandle> StartAsync(string text, CancellationToken cancellationToken) =>
+        Task.FromResult<IProgressHandle>(NullProgressHandle.Instance);
+
+    public Task<IProgressHandle> StartAsync(string text, int? replyToMessageId, CancellationToken cancellationToken) =>
         Task.FromResult<IProgressHandle>(NullProgressHandle.Instance);
 }
 

@@ -102,6 +102,7 @@ internal sealed class TelegramCommandService(
                 new BotCommand { Command = "ideate", Description = "AI builder-vs-skeptic idea sessions" },
                 new BotCommand { Command = "drop", Description = "submit YOUR idea: shape, skeptic, web research" },
                 new BotCommand { Command = "research", Description = "web-research a candidate idea" },
+                new BotCommand { Command = "queue", Description = "jobs: running, waiting, failed" },
                 new BotCommand { Command = "kill", Description = "your verdict: dismiss an idea" },
                 new BotCommand { Command = "promote", Description = "your verdict: mark an idea hot" },
                 new BotCommand { Command = "ideas", Description = "recent ideas (live and killed)" },
@@ -166,6 +167,7 @@ internal sealed class TelegramCommandService(
                 "promote" => await SetIdeaStatusAsync(argument, "hot", cancellationToken),
                 "advise" => StartAdvise(),
                 "ideas" => await SendIdeasPageAsync(argument, cancellationToken),
+                "queue" => await SendQueueAsync(cancellationToken),
                 "config" => BuildConfig(),
                 "help" or "start" => BuildHelp(),
                 _ => $"Unknown command: /{command} — try /help",
@@ -527,13 +529,22 @@ internal sealed class TelegramCommandService(
             return "Usage: /drop followed by your idea pitch — a sentence or a paragraph, more context is better.";
         }
 
+        var ack = await _bot!.SendMessage(
+            chatId: _adminChatId, text: "📦 queuing…", cancellationToken: cancellationToken);
+
         using var scope = scopeFactory.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<JobService>();
-        var jobId = await jobs.EnqueueAsync(
-            "drop", new DropJobPayload(argument.Trim(), null), cancellationToken);
+        var (jobId, position) = await jobs.EnqueueAsync(
+            "drop", new DropJobPayload(argument.Trim(), null), ack.MessageId, cancellationToken);
 
-        return $"📦 Queued as job #{jobId} — survives restarts, resumes from checkpoints. " +
-            "Shaping starts within seconds; progress log follows.";
+        await _bot!.EditMessageText(
+            chatId: _adminChatId,
+            messageId: ack.MessageId,
+            text: $"📦 <b>Job #{jobId}</b> queued · position {position} · survives restarts\n" +
+                "<i>The live progress log will reply to THIS message — tap it there. /queue for overview.</i>",
+            parseMode: ParseMode.Html,
+            cancellationToken: cancellationToken);
+        return string.Empty;
     }
 
     private async Task<string> StartResearchAsync(string? argument, CancellationToken cancellationToken)
@@ -543,12 +554,22 @@ internal sealed class TelegramCommandService(
             return "Usage: /research 5 (ids are shown by /ideas)";
         }
 
+        var ack = await _bot!.SendMessage(
+            chatId: _adminChatId, text: "🔎 queuing…", cancellationToken: cancellationToken);
+
         using var scope = scopeFactory.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<JobService>();
-        var jobId = await jobs.EnqueueAsync(
-            "research", new ResearchJobPayload(ideaId), cancellationToken);
+        var (jobId, position) = await jobs.EnqueueAsync(
+            "research", new ResearchJobPayload(ideaId), ack.MessageId, cancellationToken);
 
-        return $"🔎 Queued as job #{jobId} — survives restarts. Runs behind any active research.";
+        await _bot!.EditMessageText(
+            chatId: _adminChatId,
+            messageId: ack.MessageId,
+            text: $"🔎 <b>Job #{jobId}</b> queued · position {position} · idea #{ideaId} (/idea {ideaId})\n" +
+                "<i>The live progress log will reply to THIS message. /queue for overview.</i>",
+            parseMode: ParseMode.Html,
+            cancellationToken: cancellationToken);
+        return string.Empty;
     }
 
     private string StartAdvise()
@@ -631,6 +652,40 @@ internal sealed class TelegramCommandService(
             }
 
             var parts = (callback.Data ?? string.Empty).Split('|');
+            if (parts.Length >= 3 && parts[0] == "job" && parts[1] == "retry"
+                && long.TryParse(parts[2], out var retryJobId))
+            {
+                using var scope = scopeFactory.CreateScope();
+                var retried = await scope.ServiceProvider.GetRequiredService<JobService>()
+                    .RetryAsync(retryJobId, cancellationToken);
+                await _bot!.AnswerCallbackQuery(
+                    callback.Id,
+                    retried ? $"Job #{retryJobId} re-queued" : "Job not retryable",
+                    cancellationToken: cancellationToken);
+                return;
+            }
+
+            if (parts.Length >= 3 && parts[0] == "budget" && parts[1] == "bump")
+            {
+                using var scope = scopeFactory.CreateScope();
+                var total = await scope.ServiceProvider
+                    .GetRequiredService<IdeaEngine.Infrastructure.Ai.BudgetGuard>()
+                    .BumpTodayAsync(5m, cancellationToken);
+                await _bot!.AnswerCallbackQuery(
+                    callback.Id, $"Caps +$5 for today (total bump ${total:F0})",
+                    showAlert: true, cancellationToken: cancellationToken);
+                if (long.TryParse(parts[2], out var bumpJobId))
+                {
+                    using var retryScope = scopeFactory.CreateScope();
+                    await retryScope.ServiceProvider.GetRequiredService<JobService>()
+                        .RetryAsync(bumpJobId, cancellationToken);
+                    await notifier.SendAsync(
+                        $"💸 Caps bumped +$5 for today · job #{bumpJobId} re-queued.", cancellationToken);
+                }
+
+                return;
+            }
+
             if (parts.Length >= 3 && parts[0] == "ideas")
             {
                 var page = int.TryParse(parts[2], out var parsed) ? parsed : 1;
@@ -708,9 +763,18 @@ internal sealed class TelegramCommandService(
         page = Math.Clamp(page, 1, pages);
         var slice = filtered.Skip((page - 1) * pageSize).Take(pageSize).ToList();
 
+        var activeJobs = await db.Jobs.CountAsync(
+            j => j.Status == "queued" || j.Status == "running", cancellationToken);
+
         var builder = new StringBuilder();
         builder.Append("<b>💡 Ideas · ").Append(FilterLabel(filter)).Append("</b> — ")
-            .Append(filtered.Count).Append(" total <i>(⭐ researched · ≈ estimate)</i>\n\n");
+            .Append(filtered.Count).Append(" total <i>(⭐ researched · ≈ estimate)</i>\n");
+        if (activeJobs > 0)
+        {
+            builder.Append("⏳ ").Append(activeJobs).Append(" job(s) in flight — /queue\n");
+        }
+
+        builder.Append('\n');
 
         if (slice.Count == 0)
         {
@@ -783,6 +847,103 @@ internal sealed class TelegramCommandService(
         "dead" => "☠️",
         _ => "All",
     };
+
+    private async Task<string> SendQueueAsync(CancellationToken cancellationToken)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
+        var now = timeProvider.GetUtcNow();
+
+        var active = await db.Jobs
+            .Where(j => j.Status == "queued" || j.Status == "running")
+            .OrderBy(j => j.Id)
+            .ToListAsync(cancellationToken);
+        var failed = await db.Jobs
+            .Where(j => j.Status == "failed")
+            .OrderByDescending(j => j.Id)
+            .Take(3)
+            .ToListAsync(cancellationToken);
+        var doneToday = await db.Jobs.CountAsync(
+            j => j.Status == "done" && j.UpdatedAt >= now.AddHours(-24), cancellationToken);
+
+        var builder = new StringBuilder("<b>📋 Queue</b>\n");
+        if (active.Count == 0)
+        {
+            builder.Append("😴 empty — nothing running or waiting\n");
+        }
+
+        var position = 0;
+        foreach (var job in active)
+        {
+            position++;
+            var marker = job.Status == "running" ? "▶️" : $"{position}.";
+            builder.Append(marker).Append(" <b>#").Append(job.Id).Append("</b> ")
+                .Append(job.Kind).Append(' ').Append(JobLabel(job))
+                .Append(job.Status == "running"
+                    ? $" · running {(now - job.UpdatedAt).TotalMinutes:F0}m"
+                    : string.Empty)
+                .Append('\n');
+        }
+
+        List<Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton> retryRow = [];
+        if (failed.Count > 0)
+        {
+            builder.Append("\n<b>⛔ Failed</b>\n");
+            foreach (var job in failed)
+            {
+                builder.Append("• <b>#").Append(job.Id).Append("</b> ").Append(job.Kind)
+                    .Append(' ').Append(JobLabel(job)).Append(" — ")
+                    .Append(System.Net.WebUtility.HtmlEncode(
+                        IdeaEngine.Core.Common.TextClip.Clip(job.LastError ?? "?", 70)))
+                    .Append('\n');
+                retryRow.Add(Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton
+                    .WithCallbackData($"🔁 #{job.Id}", $"job|retry|{job.Id}"));
+            }
+        }
+
+        builder.Append("\n✅ ").Append(doneToday).Append(" done in 24h");
+
+        await _bot!.SendMessage(
+            chatId: _adminChatId,
+            text: builder.ToString(),
+            parseMode: ParseMode.Html,
+            replyMarkup: retryRow.Count > 0
+                ? new Telegram.Bot.Types.ReplyMarkups.InlineKeyboardMarkup(retryRow)
+                : null,
+            linkPreviewOptions: Telegram.Bot.Types.LinkPreviewOptions.Disabled,
+            cancellationToken: cancellationToken);
+        return string.Empty;
+    }
+
+    private static string JobLabel(IdeaEngine.Infrastructure.Persistence.Entities.JobEntity job)
+    {
+        try
+        {
+            if (job.Kind == "research")
+            {
+                var payload = System.Text.Json.JsonSerializer.Deserialize<ResearchJobPayload>(
+                    job.PayloadJson, LlmJson.Options);
+                return payload is null ? string.Empty : $"idea #{payload.IdeaId}";
+            }
+
+            if (job.Kind == "drop")
+            {
+                var payload = System.Text.Json.JsonSerializer.Deserialize<DropJobPayload>(
+                    job.PayloadJson, LlmJson.Options);
+                return payload is null
+                    ? string.Empty
+                    : payload.IdeaId is { } id
+                        ? $"idea #{id}"
+                        : $"\u201c{IdeaEngine.Core.Common.TextClip.Clip(payload.Pitch, 40)}\u201d";
+            }
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // fall through
+        }
+
+        return string.Empty;
+    }
 
     private async Task<string> SetIdeaStatusAsync(
         string? argument, string newStatus, CancellationToken cancellationToken)
@@ -1128,6 +1289,7 @@ internal sealed class TelegramCommandService(
         /drop your pitch here — YOUR idea: shaped → skeptic → web research
         /research 5 — web-validate idea number 5
         /kill 5 · /promote 5 — override any verdict with YOUR decision
+        /queue — jobs running/waiting/failed (retry buttons)
         /advise — AI reviews the pipeline itself
 
         <b>View</b>

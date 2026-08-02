@@ -7,6 +7,9 @@ namespace IdeaEngine.Core.Notifications;
 public interface IProgressNotifier
 {
     Task<IProgressHandle> StartAsync(string text, CancellationToken cancellationToken);
+
+    /// <summary>Start a progress log as a REPLY to an existing message (tap-through from ack).</summary>
+    Task<IProgressHandle> StartAsync(string text, int? replyToMessageId, CancellationToken cancellationToken);
 }
 
 /// <summary>Handle to the operation's progress message.</summary>

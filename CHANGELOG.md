@@ -5,6 +5,19 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.15.0 — 2026-08-02
+
+- Queue UX: /drop and /research post an ack card (job #, queue position); the
+  live progress log arrives as a REPLY to that ack - tap the quote to jump
+- /queue command: running (with runtime), waiting (positions), failed (last 3)
+  with 🔁 retry buttons, done-in-24h count
+- Budget-cap stops now post an actionable card: 🔁 Retry job + 💸 +$5 today
+  (bumps today's stage AND global daily caps; monthly ceiling stays hard);
+  bumping auto-re-queues the stopped job
+- Stopped jobs are marked failed (retryable) instead of silently done; failure
+  cards link the idea (/idea N) so a job is never just a number
+- /ideas shows "⏳ N job(s) in flight — /queue" while work is pending
+
 ## 0.14.0 — 2026-08-02
 
 - Durable job queue: /drop and /research are persisted jobs now - they survive
