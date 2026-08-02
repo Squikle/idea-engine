@@ -5,6 +5,37 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.10.0 — 2026-08-02
+
+- Bluesky source LIVE: app-password session auth (search requires it since 2026);
+  pain-phrase mining active
+- YouTube source LIVE: US+CA trending + top comments via official Data API
+  (~50 of 10,000 free daily quota units per cycle); /collect youtube
+- Chat facelift: consistent emoji vocabulary for fast scanning - 🟢/🔴 worker,
+  📥 collect, 🧠 analyze, 💡 ideas, 🔎 research, 🧭 advisor, 💸 spend;
+  signal kinds 🩹✨💰📈😤; idea statuses 🔥✅🟡☠️; verdicts 🟢🟡🔴;
+  bolded ids, itemized sections, breathing room
+- Reddit RSS: slower cadence (5s/feed) + single retry - stops the 429 hammering;
+  Polly retry noise silenced from logs and alerts
+
+## 0.9.0 — 2026-08-02
+
+- AUTOPILOT: the machine now produces ideas on its own - daily ideation at 10:00
+  Ontario (3 sessions) with auto-research of the best fresh candidate (rating
+  gate, no money on weak ideas), and the daily digest at 21:00 Ontario
+- Bootstrap: on startup with zero product ideas, ideation runs immediately
+- Daily digest: collected per source, +signals with top-3 by value, ideas
+  live/killed, research verdicts, 24h spend by stage - honest "nothing cleared
+  the bar" when empty
+- Ontario local time everywhere (status board, reports, schedules; DST-safe;
+  IdeaEngine:TimeZone configurable)
+- /ideas shows product ideas only - meta proposals moved to the journal count
+- Error alerts: Warning+ log events reach Telegram, deduplicated 1/hour
+- Retention/compliance job: Reddit content copies stripped after 30 days
+  (ADR-0004 posture), old pipeline runs pruned after 90
+- ResearchCoordinator: manual /research, /drop chain and autopilot share one
+  single-flight research slot
+
 ## 0.8.0 — 2026-08-02
 
 - Live progress: /ideate /drop /research /advise now show ONE message edited in

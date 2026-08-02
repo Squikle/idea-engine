@@ -18,6 +18,7 @@ public static class SourceKindParser
             "bsky" or "bluesky" => SourceKind.Bluesky,
             "lemmy" => SourceKind.Lemmy,
             "reddit" or "rss" or "redditrss" => SourceKind.RedditRss,
+            "youtube" or "yt" => SourceKind.YouTube,
             _ => SourceKind.Unknown,
         };
 

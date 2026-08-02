@@ -1,3 +1,4 @@
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -8,8 +9,8 @@ using Microsoft.Extensions.Options;
 namespace IdeaEngine.Infrastructure.Sources.Bluesky;
 
 /// <summary>
-/// Mines Bluesky via the public AppView (no auth required for public reads).
-/// Strategy: keyword-search literal pain-point phrases; the post itself is the signal,
+/// Mines Bluesky search with an app-password session (search requires auth since 2026).
+/// A fresh short-lived session is created per fetch run; the post itself is the signal,
 /// so replies are not fetched (reply/like counts still captured for scoring).
 /// </summary>
 public sealed class BlueskyAdapter(
@@ -27,6 +28,18 @@ public sealed class BlueskyAdapter(
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var config = adapterOptions.Value;
+        if (!config.IsConfigured)
+        {
+            logger.LogInformation("Bluesky skipped: BLUESKY_IDENTIFIER/APP_PASSWORD not set");
+            yield break;
+        }
+
+        var accessJwt = await CreateSessionAsync(config, cancellationToken);
+        if (accessJwt is null)
+        {
+            yield break;
+        }
+
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var yielded = 0;
 
@@ -38,7 +51,7 @@ public sealed class BlueskyAdapter(
             }
 
             await Task.Delay(config.PolitenessDelayMs, cancellationToken);
-            var posts = await SearchAsync(query, config.LimitPerQuery, cancellationToken);
+            var posts = await SearchAsync(query, config.LimitPerQuery, accessJwt, cancellationToken);
 
             foreach (var post in posts)
             {
@@ -59,15 +72,47 @@ public sealed class BlueskyAdapter(
         }
     }
 
+    private async Task<string?> CreateSessionAsync(BlueskyOptions config, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var response = await httpClient.PostAsJsonAsync(
+                new Uri("xrpc/com.atproto.server.createSession", UriKind.Relative),
+                new { identifier = config.Identifier, password = config.AppPassword },
+                JsonOptions, cancellationToken);
+            response.EnsureSuccessStatusCode();
+
+            var session = await response.Content.ReadFromJsonAsync<BlueskySessionResponse>(
+                JsonOptions, cancellationToken);
+            if (string.IsNullOrWhiteSpace(session?.AccessJwt))
+            {
+                logger.LogWarning("Bluesky session response had no access token");
+                return null;
+            }
+
+            return session.AccessJwt;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
+        {
+            logger.LogWarning(ex, "Bluesky session creation failed (bad app password?)");
+            return null;
+        }
+    }
+
     private async Task<IReadOnlyList<BlueskyPost>> SearchAsync(
-        string query, int limit, CancellationToken cancellationToken)
+        string query, int limit, string accessJwt, CancellationToken cancellationToken)
     {
         try
         {
             var url = $"xrpc/app.bsky.feed.searchPosts?q={Uri.EscapeDataString($"\"{query}\"")}&sort=top&limit={limit}";
-            var response = await httpClient.GetFromJsonAsync<BlueskySearchResponse>(
-                new Uri(url, UriKind.Relative), JsonOptions, cancellationToken);
-            return response?.Posts ?? [];
+            using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(url, UriKind.Relative));
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessJwt);
+
+            using var response = await httpClient.SendAsync(request, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            var parsed = await response.Content.ReadFromJsonAsync<BlueskySearchResponse>(
+                JsonOptions, cancellationToken);
+            return parsed?.Posts ?? [];
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
         {

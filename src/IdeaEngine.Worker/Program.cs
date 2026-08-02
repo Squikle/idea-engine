@@ -16,7 +16,8 @@ try
     builder.Services.AddSerilog((services, loggerConfiguration) => loggerConfiguration
         .ReadFrom.Configuration(builder.Configuration)
         .ReadFrom.Services(services)
-        .Enrich.FromLogContext());
+        .Enrich.FromLogContext()
+        .WriteTo.Sink(TelegramLogSink.Instance, Serilog.Events.LogEventLevel.Warning));
 
     builder.Services.AddIdeaEngineInfrastructure(builder.Configuration);
     builder.Services.AddHostedService<StatusLifecycleService>(); // first: others report into it
@@ -24,6 +25,8 @@ try
     builder.Services.AddHostedService<IngestionHostedService>();
     builder.Services.AddHostedService<TriageHostedService>();
     builder.Services.AddHostedService<TelegramCommandService>();
+    builder.Services.AddHostedService<AutopilotHostedService>();
+    builder.Services.AddHostedService<RetentionHostedService>();
 
     // Last-resort exit hook: unhandled exceptions on non-host threads.
     AppDomain.CurrentDomain.UnhandledException += (_, eventArgs) =>

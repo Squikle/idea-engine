@@ -16,6 +16,7 @@ public sealed class TelegramStatusBoard(
     ITelegramBotClient botClient,
     long adminChatId,
     TimeProvider timeProvider,
+    TimeZoneInfo timeZone,
     ILogger<TelegramStatusBoard> logger) : IStatusBoard, IDisposable
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -40,7 +41,7 @@ public sealed class TelegramStatusBoard(
 
         try
         {
-            var text = StatusRenderer.RenderLive("Starting", null, null, _startedAt, _startedAt);
+            var text = StatusRenderer.RenderLive("Starting", null, null, _startedAt, _startedAt, timeZone);
             var message = await botClient.SendMessage(
                 chatId: adminChatId,
                 text: text,
@@ -72,7 +73,7 @@ public sealed class TelegramStatusBoard(
         }
 
         var text = StatusRenderer.RenderLive(
-            activity, detail, nextCycleAt, _startedAt, timeProvider.GetUtcNow());
+            activity, detail, nextCycleAt, _startedAt, timeProvider.GetUtcNow(), timeZone);
 
         if (text == _lastText)
         {
@@ -118,7 +119,7 @@ public sealed class TelegramStatusBoard(
             await botClient.EditMessageText(
                 chatId: adminChatId,
                 messageId: messageId,
-                text: StatusRenderer.RenderOffline(reason, timeProvider.GetUtcNow()),
+                text: StatusRenderer.RenderOffline(reason, timeProvider.GetUtcNow(), timeZone),
                 parseMode: ParseMode.Html,
                 cancellationToken: timeout.Token);
         }

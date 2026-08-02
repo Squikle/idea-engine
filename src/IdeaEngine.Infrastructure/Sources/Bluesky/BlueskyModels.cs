@@ -2,6 +2,10 @@ using System.Text.Json.Serialization;
 
 namespace IdeaEngine.Infrastructure.Sources.Bluesky;
 
+internal sealed record BlueskySessionResponse(
+    [property: JsonPropertyName("accessJwt")] string? AccessJwt,
+    [property: JsonPropertyName("handle")] string? Handle);
+
 internal sealed record BlueskySearchResponse(
     [property: JsonPropertyName("posts")] IReadOnlyList<BlueskyPost>? Posts);
 

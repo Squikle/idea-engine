@@ -21,14 +21,24 @@ public sealed class BlueskyAdapterTests
         ]}
         """;
 
+    private const string SessionJson =
+        """{"accessJwt":"jwt-token","handle":"maker.bsky.social"}""";
+
     private static BlueskyAdapter CreateAdapter()
     {
-        var stub = new StubHttpMessageHandler().Map("app.bsky.feed.searchPosts", SearchJson);
-        var options = new BlueskyOptions { PolitenessDelayMs = 0 };
+        var stub = new StubHttpMessageHandler()
+            .Map("com.atproto.server.createSession", SessionJson)
+            .Map("app.bsky.feed.searchPosts", SearchJson);
+        var options = new BlueskyOptions
+        {
+            PolitenessDelayMs = 0,
+            Identifier = "maker.bsky.social",
+            AppPassword = "xxxx-xxxx-xxxx-xxxx",
+        };
         options.Queries.Clear();
         options.Queries.Add("someone should make");
 
-        var httpClient = new HttpClient(stub) { BaseAddress = new Uri("https://public.api.bsky.app/") };
+        var httpClient = new HttpClient(stub) { BaseAddress = new Uri("https://bsky.social/") };
         return new BlueskyAdapter(
             httpClient,
             new FakeTimeProvider(new DateTimeOffset(2026, 8, 2, 12, 0, 0, TimeSpan.Zero)),

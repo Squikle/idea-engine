@@ -8,6 +8,7 @@ namespace IdeaEngine.Worker;
 /// </summary>
 internal sealed class StatusLifecycleService(
     IStatusBoard statusBoard,
+    INotifier notifier,
     IHostApplicationLifetime lifetime) : IHostedService
 {
     /// <summary>Emergency handle for crash paths outside DI (Program catch, AppDomain hook).</summary>
@@ -16,6 +17,7 @@ internal sealed class StatusLifecycleService(
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         Current = statusBoard;
+        TelegramLogSink.Instance.Attach(notifier); // error alerts flow from here on
         await statusBoard.InitializeAsync(cancellationToken);
 
         // Graceful shutdown (SIGINT/SIGTERM/host stop). OfflineAsync is self-timeboxed to 5s.

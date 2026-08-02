@@ -1,10 +1,11 @@
 using System.Globalization;
 using System.Net;
 using System.Text;
+using IdeaEngine.Core.Common;
 
 namespace IdeaEngine.Infrastructure.Notifications;
 
-/// <summary>Renders the pinned status message (Telegram HTML). Pure and testable.</summary>
+/// <summary>Renders the pinned status message (Telegram HTML) in the owner's time zone.</summary>
 public static class StatusRenderer
 {
     public static string RenderLive(
@@ -12,12 +13,14 @@ public static class StatusRenderer
         string? detail,
         DateTimeOffset? nextCycleAt,
         DateTimeOffset startedAt,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        TimeZoneInfo timeZone)
     {
+        var label = Scheduling.ZoneLabel(timeZone);
         var builder = new StringBuilder();
-        builder.Append("<b>● idea-engine</b>\n");
+        builder.Append("<b>").Append(Ui.Live).Append(" idea-engine</b>\n");
 
-        builder.Append(WebUtility.HtmlEncode(activity));
+        builder.Append(Ui.Activity(activity)).Append(' ').Append(WebUtility.HtmlEncode(activity));
         if (!string.IsNullOrWhiteSpace(detail))
         {
             builder.Append(" — ").Append(WebUtility.HtmlEncode(detail));
@@ -29,22 +32,25 @@ public static class StatusRenderer
         {
             var wait = next - now;
             builder.Append("Next cycle: ")
-                .Append(next.ToString("HH:mm", CultureInfo.InvariantCulture))
-                .Append(" UTC (in ")
+                .Append(TimeZoneInfo.ConvertTime(next, timeZone).ToString("HH:mm", CultureInfo.InvariantCulture))
+                .Append(' ').Append(label)
+                .Append(" (in ")
                 .Append(FormatDuration(wait))
                 .Append(")\n");
         }
 
         builder.Append("Up since ")
-            .Append(startedAt.ToString("dd MMM HH:mm", CultureInfo.InvariantCulture))
-            .Append(" UTC · upd ")
-            .Append(now.ToString("HH:mm:ss", CultureInfo.InvariantCulture));
+            .Append(TimeZoneInfo.ConvertTime(startedAt, timeZone).ToString("dd MMM HH:mm", CultureInfo.InvariantCulture))
+            .Append(' ').Append(label).Append(" · upd ")
+            .Append(TimeZoneInfo.ConvertTime(now, timeZone).ToString("HH:mm:ss", CultureInfo.InvariantCulture));
 
         return builder.ToString();
     }
 
-    public static string RenderOffline(string reason, DateTimeOffset now) =>
-        $"<b>○ idea-engine — OFFLINE</b>\n{WebUtility.HtmlEncode(reason)}\n{now.ToString("dd MMM HH:mm:ss", CultureInfo.InvariantCulture)} UTC";
+    public static string RenderOffline(string reason, DateTimeOffset now, TimeZoneInfo timeZone) =>
+        $"<b>{Ui.Offline} idea-engine — OFFLINE</b>\n{WebUtility.HtmlEncode(reason)}\n" +
+        $"{TimeZoneInfo.ConvertTime(now, timeZone).ToString("dd MMM HH:mm:ss", CultureInfo.InvariantCulture)} " +
+        Scheduling.ZoneLabel(timeZone);
 
     private static string FormatDuration(TimeSpan value)
     {

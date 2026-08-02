@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Text;
+using IdeaEngine.Core.Common;
 using IdeaEngine.Core.Pipeline;
 
 namespace IdeaEngine.Infrastructure.Notifications;
@@ -11,13 +12,14 @@ public static class IngestionReportFormatter
     private const int MaxHighlights = 5;
     private const int MaxTitleLength = 90;
 
-    public static string Format(IngestionCycleReport report)
+    public static string Format(IngestionCycleReport report, TimeZoneInfo timeZone)
     {
         var builder = new StringBuilder();
 
-        builder.Append("<b>Collected · ")
-            .Append(report.FinishedAt.ToString("dd MMM HH:mm", CultureInfo.InvariantCulture))
-            .Append(" UTC</b>\n");
+        builder.Append("<b>").Append(Ui.Collect).Append(" Collected · ")
+            .Append(TimeZoneInfo.ConvertTime(report.FinishedAt, timeZone)
+                .ToString("dd MMM HH:mm", CultureInfo.InvariantCulture))
+            .Append(' ').Append(Scheduling.ZoneLabel(timeZone)).Append("</b>\n");
 
         foreach (var source in report.Sources)
         {
@@ -52,7 +54,7 @@ public static class IngestionReportFormatter
 
         if (highlights.Count > 0)
         {
-            builder.Append("\n<b>Worth a look</b>\n");
+            builder.Append("\n<b>").Append(Ui.Best).Append(" Worth a look</b>\n");
             var rank = 1;
             foreach (var highlight in highlights)
             {

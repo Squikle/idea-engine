@@ -25,6 +25,7 @@ public sealed class IngestionService(
     INotifier notifier,
     IStatusBoard statusBoard,
     TimeProvider timeProvider,
+    TimeZoneInfo timeZone,
     IOptions<IngestionOptions> ingestionOptions,
     ILogger<IngestionService> logger)
 {
@@ -52,7 +53,7 @@ public sealed class IngestionService(
 
         if (config.NotifyEveryCycle || report.TotalStored > 0 || report.TotalErrors > 0)
         {
-            await notifier.SendAsync(IngestionReportFormatter.Format(report), cancellationToken);
+            await notifier.SendAsync(IngestionReportFormatter.Format(report, timeZone), cancellationToken);
         }
 
         logger.LogInformation(

@@ -16,6 +16,15 @@ public sealed class BlueskyOptions
         "does anyone make",
     ];
 
+    /// <summary>Filled from env (BLUESKY_IDENTIFIER); search requires an authenticated session.</summary>
+    public string? Identifier { get; set; }
+
+    /// <summary>Filled from env (BLUESKY_APP_PASSWORD) - an app password, never the main one.</summary>
+    public string? AppPassword { get; set; }
+
+    public bool IsConfigured =>
+        !string.IsNullOrWhiteSpace(Identifier) && !string.IsNullOrWhiteSpace(AppPassword);
+
     /// <summary>Posts requested per query (API max 100).</summary>
     public int LimitPerQuery { get; set; } = 25;
 

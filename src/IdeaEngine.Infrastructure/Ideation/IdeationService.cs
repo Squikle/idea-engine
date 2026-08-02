@@ -3,6 +3,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using IdeaEngine.Core.Common;
 using IdeaEngine.Core.Notifications;
 using IdeaEngine.Infrastructure.Ai;
 using IdeaEngine.Infrastructure.Persistence;
@@ -196,9 +197,9 @@ public sealed class IdeationService(
         await db.SaveChangesAsync(cancellationToken);
 
         var builder = new StringBuilder();
-        builder.Append("<b>#").Append(entity.Id).Append(" · ")
-            .Append(WebUtility.HtmlEncode(entity.Title)).Append("</b> (yours)\n")
-            .Append("Skeptic: ").Append(advanced ? "advance" : "kill");
+        builder.Append(Ui.Drop).Append(" <b>#").Append(entity.Id).Append(" · ")
+            .Append(WebUtility.HtmlEncode(entity.Title)).Append("</b> 🧑\n")
+            .Append("Skeptic: ").Append(advanced ? "🟢 advance" : "☠️ kill");
         if (review?.KillReasons is { Count: > 0 } reasons && !advanced)
         {
             builder.Append(" — ").Append(WebUtility.HtmlEncode(Truncate(reasons[0], 120)!));
@@ -261,7 +262,7 @@ public sealed class IdeationService(
         }
 
         var now = timeProvider.GetUtcNow();
-        var builder = new StringBuilder("<b>Pipeline advice</b>\n");
+        var builder = new StringBuilder($"<b>{Ui.Advise} Pipeline advice</b>\n");
         var journal = new StringBuilder();
         journal.Append("## ").Append(now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture))
             .Append(" UTC · advisor · ").Append(options.BuilderModel).Append('\n');
@@ -390,8 +391,8 @@ public sealed class IdeationService(
         await db.SaveChangesAsync(cancellationToken);
 
         var line = advanced
-            ? $"LIVE [{entity.Category}/e{entity.EffortScale}] {entity.Title}"
-            : $"killed [{entity.Category}/e{entity.EffortScale}] {entity.Title} — {Truncate(killReason, 90) ?? "skeptic said no"}";
+            ? $"🟢 [{entity.Category}/e{entity.EffortScale}] {entity.Title}"
+            : $"☠️ [{entity.Category}/e{entity.EffortScale}] {entity.Title} — {Truncate(killReason, 90) ?? "skeptic said no"}";
 
         return new SessionOutcome(
             advanced ? SessionOutcomeKind.Advanced : SessionOutcomeKind.Killed, line, cost);

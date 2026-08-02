@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Text;
+using IdeaEngine.Core.Common;
 using IdeaEngine.Core.Notifications;
 using IdeaEngine.Core.Pipeline;
 using IdeaEngine.Infrastructure.Ai;
@@ -145,7 +146,7 @@ public sealed class TriageCoordinator(
                 .ToList();
 
             var builder = new StringBuilder();
-            builder.Append("<b>Analyzed</b> ").Append(analyzed).Append(" items → +")
+            builder.Append("<b>").Append(Ui.Analyze).Append(" Analyzed</b> ").Append(analyzed).Append(" items → +")
                 .Append(signals).Append(" signals · $")
                 .Append(cost.ToString("F3", CultureInfo.InvariantCulture)).Append('\n');
 
@@ -154,7 +155,7 @@ public sealed class TriageCoordinator(
             {
                 builder.Append(rank++).Append(". v")
                     .Append(signal.Value.ToString("F2", CultureInfo.InvariantCulture))
-                    .Append(" [").Append(signal.Kind).Append("] ")
+                    .Append(' ').Append(Ui.Kind(signal.Kind)).Append(' ')
                     .Append(WebUtility.HtmlEncode(
                         signal.Summary.Length > 90 ? signal.Summary[..89] + "…" : signal.Summary));
 

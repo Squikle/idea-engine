@@ -3,6 +3,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using IdeaEngine.Core.Common;
 using IdeaEngine.Core.Notifications;
 using IdeaEngine.Infrastructure.Ai;
 using IdeaEngine.Infrastructure.Ideation;
@@ -236,16 +237,16 @@ public sealed class ResearchService(
         IdeaEntity idea, string verdict, ReportDto report, decimal cost, int searches)
     {
         var builder = new StringBuilder();
-        builder.Append("<b>Research #").Append(idea.Id).Append(" · ")
+        builder.Append(Ui.Research).Append(" <b>Research #").Append(idea.Id).Append(" · ")
             .Append(WebUtility.HtmlEncode(idea.Title)).Append("</b>\n")
-            .Append("Verdict: <b>").Append(verdict.ToUpperInvariant()).Append("</b> (conf ")
+            .Append("Verdict: <b>").Append(Ui.Verdict(verdict)).Append("</b> (conf ")
             .Append(report.Confidence.ToString("F2", CultureInfo.InvariantCulture))
             .Append(") → status ").Append(idea.Status).Append('\n');
 
         var competitors = (report.Competitors ?? []).Take(4).ToList();
         if (competitors.Count > 0)
         {
-            builder.Append("\n<b>Competitors</b>\n");
+            builder.Append("\n<b>🏪 Competitors</b>\n");
             foreach (var competitor in competitors)
             {
                 builder.Append("• ");
@@ -272,41 +273,41 @@ public sealed class ResearchService(
 
         if (!string.IsNullOrWhiteSpace(report.DifferentiationPath))
         {
-            builder.Append("\n<b>Differentiation:</b> ")
+            builder.Append("\n<b>🧭 Differentiation:</b> ")
                 .Append(WebUtility.HtmlEncode(Truncate(report.DifferentiationPath, 250))).Append('\n');
         }
 
         var risks = (report.Risks ?? []).Take(3).ToList();
         if (risks.Count > 0)
         {
-            builder.Append("<b>Risks:</b> ")
+            builder.Append("<b>⚠️ Risks:</b> ")
                 .Append(WebUtility.HtmlEncode(Truncate(string.Join("; ", risks), 280))).Append('\n');
         }
 
         if (!string.IsNullOrWhiteSpace(report.MvpTest))
         {
-            builder.Append("<b>MVP test:</b> ")
+            builder.Append("<b>🧪 MVP test:</b> ")
                 .Append(WebUtility.HtmlEncode(Truncate(report.MvpTest, 220))).Append('\n');
         }
 
         var variants = (report.RelatedVariants ?? []).Take(4).ToList();
         if (variants.Count > 0)
         {
-            builder.Append("<b>Stronger variants:</b> ")
+            builder.Append("<b>🔀 Stronger variants:</b> ")
                 .Append(WebUtility.HtmlEncode(Truncate(string.Join(" · ", variants), 260))).Append('\n');
         }
 
         var steps = (report.NextSteps ?? []).Take(3).ToList();
         if (steps.Count > 0)
         {
-            builder.Append("<b>Next steps</b>\n");
+            builder.Append("<b>➡️ Next steps</b>\n");
             foreach (var step in steps)
             {
                 builder.Append("→ ").Append(WebUtility.HtmlEncode(Truncate(step, 140))).Append('\n');
             }
         }
 
-        builder.Append("\n$").Append(cost.ToString("F4", CultureInfo.InvariantCulture))
+        builder.Append('\n').Append(Ui.Spend).Append(" $").Append(cost.ToString("F4", CultureInfo.InvariantCulture))
             .Append(" · ").Append(searches).Append(" searches · /idea ").Append(idea.Id);
 
         var text = builder.ToString().TrimEnd();

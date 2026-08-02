@@ -70,6 +70,33 @@ Verify db: `docker compose ps` → `idea-engine-db (healthy)`.
 2. Subscribe to the **Search** plan — $5 free credits monthly ≈ 1,000 searches.
 3. Create API key → `.env` as `BRAVE_API_KEY`.
 
+### 5. Bluesky app password (~3 min, free) — unlocks the Bluesky source
+
+1. Create/log into a Bluesky account (bsky.app).
+2. Settings → Privacy & Security → **App Passwords** → Add App Password, name `idea-engine`.
+3. Put into `.env`: `BLUESKY_IDENTIFIER=yourhandle.bsky.social` and
+   `BLUESKY_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx`.
+   Never use your main account password.
+
+### 6. YouTube Data API key (~5 min, free 10k units/day)
+
+1. console.cloud.google.com → create project `idea-engine` (any Google account).
+2. APIs & Services → Library → search **YouTube Data API v3** → Enable.
+3. APIs & Services → Credentials → Create credentials → **API key**.
+4. Recommended: restrict the key to the YouTube Data API only.
+5. `.env`: `YOUTUBE_API_KEY=...`
+
+### 7. healthchecks.io (~2 min, free) — dead-man's switch
+
+1. Sign up at healthchecks.io → New Check, name `idea-engine`, period 1 day, grace 6 h.
+2. Copy the ping URL → `.env`: `HEALTHCHECK_PING_URL=https://hc-ping.com/...`
+
+### 8. Product Hunt token (optional, ~5 min, free)
+
+1. producthunt.com account → api.producthunt.com/v2/oauth/applications → Add application
+   (redirect URI can be `http://localhost`).
+2. Copy the **Developer Token** → `.env`: `PRODUCTHUNT_TOKEN=...`
+
 ## Operations
 
 ### Logs

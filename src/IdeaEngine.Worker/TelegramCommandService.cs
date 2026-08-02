@@ -27,24 +27,18 @@ internal sealed class TelegramCommandService(
     IServiceScopeFactory scopeFactory,
     IngestionCoordinator coordinator,
     TriageCoordinator triageCoordinator,
+    ResearchCoordinator researchCoordinator,
     INotifier notifier,
     IProgressNotifier progressNotifier,
     TimeProvider timeProvider,
+    TimeZoneInfo timeZone,
     IOptions<IngestionOptions> ingestionOptions,
+    IOptions<IdeaEngine.Infrastructure.Autopilot.AutopilotOptions> autopilotOptions,
     ILogger<TelegramCommandService> logger) : BackgroundService
 {
-    private readonly SemaphoreSlim _ideateGate = new(1, 1);
-    private readonly SemaphoreSlim _researchGate = new(1, 1);
     private ITelegramBotClient? _bot;
     private long _adminChatId;
     private DateTimeOffset _startedAt;
-
-    public override void Dispose()
-    {
-        _ideateGate.Dispose();
-        _researchGate.Dispose();
-        base.Dispose();
-    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -203,8 +197,8 @@ internal sealed class TelegramCommandService(
             .ToListAsync(cancellationToken);
 
         var builder = new StringBuilder();
-        builder.Append("<b>Status</b>\n");
-        builder.Append(coordinator.IsRunning ? "Collecting now\n" : "Idle\n");
+        builder.Append("<b>📊 Status</b>\n");
+        builder.Append(coordinator.IsRunning ? "📥 Collecting now\n" : "😴 Idle\n");
         if (coordinator.NextCycleAt is { } next)
         {
             builder.Append("Next cycle: ").Append(next.ToString("HH:mm", CultureInfo.InvariantCulture))
@@ -213,19 +207,27 @@ internal sealed class TelegramCommandService(
 
         builder.Append("Uptime: ").Append(FormatWait(now - _startedAt)).Append('\n');
 
-        builder.Append("\n<b>Items by source</b>\n");
+        var autopilot = autopilotOptions.Value;
+        if (autopilot.Enabled)
+        {
+            var zone = IdeaEngine.Core.Common.Scheduling.ZoneLabel(timeZone);
+            builder.Append("Autopilot: ideation ").Append(autopilot.IdeationTime).Append(' ').Append(zone)
+                .Append(" · digest ").Append(autopilot.DigestTime).Append(' ').Append(zone).Append('\n');
+        }
+
+        builder.Append("\n<b>📥 Items by source</b>\n");
         foreach (var row in bySource.OrderByDescending(r => r.Count))
         {
             builder.Append(row.Source).Append(": ").Append(row.Count).Append('\n');
         }
 
-        builder.Append("\n<b>By stage</b>\n");
+        builder.Append("\n<b>⚙️ By stage</b>\n");
         foreach (var row in byStatus.OrderBy(r => r.Status))
         {
             builder.Append(row.Status).Append(": ").Append(row.Count).Append('\n');
         }
 
-        builder.Append("\n<b>Recent runs</b>\n");
+        builder.Append("\n<b>🕐 Recent runs</b>\n");
         foreach (var run in lastRuns)
         {
             var took = run.FinishedAt is { } finished ? (finished - run.StartedAt).TotalSeconds : 0;
@@ -255,7 +257,7 @@ internal sealed class TelegramCommandService(
             return "Nothing collected in the last 24h.";
         }
 
-        var builder = new StringBuilder("<b>Top of the last 24h</b>\n");
+        var builder = new StringBuilder("<b>🔝 Top of the last 24h</b>\n");
         var rank = 1;
         foreach (var item in top)
         {
@@ -302,10 +304,10 @@ internal sealed class TelegramCommandService(
             return "No signals extracted yet — triage may still be draining the queue (/status).";
         }
 
-        var builder = new StringBuilder("<b>Latest signals</b>\n");
+        var builder = new StringBuilder("<b>🎯 Latest signals</b>\n");
         foreach (var signal in signals)
         {
-            builder.Append("• <b>").Append(signal.Kind).Append("</b> ")
+            builder.Append("• ").Append(IdeaEngine.Core.Common.Ui.Kind(signal.Kind)).Append(' ')
                 .Append(System.Net.WebUtility.HtmlEncode(signal.Summary));
 
             builder.Append(" <i>(").Append(signal.CommercialSentiment.Replace('_', ' '))
@@ -351,7 +353,7 @@ internal sealed class TelegramCommandService(
             return "No AI spend recorded yet.";
         }
 
-        var builder = new StringBuilder("<b>AI costs (7 days)</b>\n");
+        var builder = new StringBuilder("<b>💸 AI costs · 7 days</b>\n");
         foreach (var row in rows)
         {
             builder.Append(row.Day == today ? "today" : row.Day.ToString("dd MMM", CultureInfo.InvariantCulture))
@@ -402,7 +404,7 @@ internal sealed class TelegramCommandService(
             },
             CancellationToken.None);
 
-        return only is { } k ? $"Collecting {k} now…" : "Collecting all sources now…";
+        return only is { } k ? $"📥 Collecting {k} now…" : "📥 Collecting all sources now…";
     }
 
     private string StartAnalyze()
@@ -437,7 +439,7 @@ internal sealed class TelegramCommandService(
             },
             CancellationToken.None);
 
-        return "Analyzing the queue now…";
+        return "🧠 Analyzing the queue now…";
     }
 
     private string StartIdeate(string? argument)
@@ -448,7 +450,7 @@ internal sealed class TelegramCommandService(
             return "Usage: /ideate [1-10]";
         }
 
-        if (!_ideateGate.Wait(0))
+        if (!OperationGates.Ideation.Wait(0))
         {
             return "Ideation is already running — results will arrive when it finishes.";
         }
@@ -460,7 +462,7 @@ internal sealed class TelegramCommandService(
                 try
                 {
                     var progress = await progressNotifier.StartAsync(
-                        $"Ideation · starting {sessions} session(s)…", CancellationToken.None);
+                        $"💡 Ideation · starting {sessions} session(s)…", CancellationToken.None);
 
                     using var scope = scopeFactory.CreateScope();
                     var ideation = scope.ServiceProvider.GetRequiredService<IdeationService>();
@@ -471,19 +473,8 @@ internal sealed class TelegramCommandService(
                         $"${result.CostUsd.ToString("F2", CultureInfo.InvariantCulture)}",
                         CancellationToken.None);
 
-                    var builder = new StringBuilder("<b>Ideation results</b>\n");
-                    foreach (var line in result.Lines)
-                    {
-                        builder.Append(System.Net.WebUtility.HtmlEncode(line)).Append('\n');
-                    }
-
-                    if (result.StoppedReason is { } reason)
-                    {
-                        builder.Append("\nStopped: ").Append(System.Net.WebUtility.HtmlEncode(reason));
-                    }
-
-                    builder.Append("\n/ideas for ratings · /research id to validate");
-                    await notifier.SendAsync(builder.ToString(), CancellationToken.None);
+                    await notifier.SendAsync(
+                        IdeationFormatting.BuildResultsHtml(result), CancellationToken.None);
                 }
                 catch (Exception ex)
                 {
@@ -492,7 +483,7 @@ internal sealed class TelegramCommandService(
                 }
                 finally
                 {
-                    _ideateGate.Release();
+                    OperationGates.Ideation.Release();
                 }
             },
             CancellationToken.None);
@@ -507,7 +498,7 @@ internal sealed class TelegramCommandService(
             return "Usage: /drop followed by your idea pitch — a sentence or a paragraph, more context is better.";
         }
 
-        if (!_ideateGate.Wait(0))
+        if (!OperationGates.Ideation.Wait(0))
         {
             return "Ideation is busy — try again in a minute.";
         }
@@ -519,7 +510,7 @@ internal sealed class TelegramCommandService(
                 try
                 {
                     var progress = await progressNotifier.StartAsync(
-                        "Drop · received, shaping your pitch…", CancellationToken.None);
+                        "📦 Drop · received, shaping your pitch…", CancellationToken.None);
 
                     long? ideaId;
                     using (var scope = scopeFactory.CreateScope())
@@ -545,30 +536,26 @@ internal sealed class TelegramCommandService(
                     await progress.UpdateAsync(
                         $"Drop · #{ideaId} stored · waiting for the research slot…", CancellationToken.None);
 
-                    // Chain the full validation: wait for the research slot, then run.
-                    await _researchGate.WaitAsync(CancellationToken.None);
-                    try
+                    // Chain the full validation: queue for the research slot, then run.
+                    var result = await researchCoordinator.RunAsync(
+                        ideaId.Value, progress, wait: true, CancellationToken.None);
+                    if (result is null)
                     {
-                        using var scope = scopeFactory.CreateScope();
-                        var research = scope.ServiceProvider.GetRequiredService<ResearchService>();
-                        var result = await research.RunAsync(ideaId.Value, progress, CancellationToken.None);
-                        if (result.StoppedReason is { } stopped)
-                        {
-                            await progress.CompleteAsync(
-                                $"Drop · research stopped: {System.Net.WebUtility.HtmlEncode(stopped)}",
-                                CancellationToken.None);
-                            return;
-                        }
+                        return; // unreachable with wait: true
+                    }
 
-                        await progress.CompleteAsync(
-                            $"Drop · done: {result.Verdict?.ToUpperInvariant()} · report below",
-                            CancellationToken.None);
-                        await notifier.SendAsync(result.Html, CancellationToken.None);
-                    }
-                    finally
+                    if (result.StoppedReason is { } stopped)
                     {
-                        _researchGate.Release();
+                        await progress.CompleteAsync(
+                            $"Drop · research stopped: {System.Net.WebUtility.HtmlEncode(stopped)}",
+                            CancellationToken.None);
+                        return;
                     }
+
+                    await progress.CompleteAsync(
+                        $"Drop · done: {result.Verdict?.ToUpperInvariant()} · report below",
+                        CancellationToken.None);
+                    await notifier.SendAsync(result.Html, CancellationToken.None);
                 }
                 catch (Exception ex)
                 {
@@ -577,7 +564,7 @@ internal sealed class TelegramCommandService(
                 }
                 finally
                 {
-                    _ideateGate.Release();
+                    OperationGates.Ideation.Release();
                 }
             },
             CancellationToken.None);
@@ -592,22 +579,24 @@ internal sealed class TelegramCommandService(
             return "Usage: /research 5 (ids are shown by /ideas)";
         }
 
-        if (!_researchGate.Wait(0))
-        {
-            return "Research is already running — one report at a time.";
-        }
-
         _ = Task.Run(
             async () =>
             {
                 try
                 {
                     var progress = await progressNotifier.StartAsync(
-                        $"Research #{ideaId} · preparing…", CancellationToken.None);
+                        $"🔎 Research #{ideaId} · preparing…", CancellationToken.None);
 
-                    using var scope = scopeFactory.CreateScope();
-                    var research = scope.ServiceProvider.GetRequiredService<ResearchService>();
-                    var result = await research.RunAsync(ideaId, progress, CancellationToken.None);
+                    var result = await researchCoordinator.RunAsync(
+                        ideaId, progress, wait: false, CancellationToken.None);
+                    if (result is null)
+                    {
+                        await progress.CompleteAsync(
+                            $"Research #{ideaId} not started · another report is running, retry shortly",
+                            CancellationToken.None);
+                        return;
+                    }
+
                     if (result.StoppedReason is { } reason)
                     {
                         await progress.CompleteAsync(
@@ -626,10 +615,6 @@ internal sealed class TelegramCommandService(
                     logger.LogError(ex, "Research run failed for idea {IdeaId}", ideaId);
                     await notifier.SendAsync("Research crashed — check logs.", CancellationToken.None);
                 }
-                finally
-                {
-                    _researchGate.Release();
-                }
             },
             CancellationToken.None);
 
@@ -638,7 +623,7 @@ internal sealed class TelegramCommandService(
 
     private string StartAdvise()
     {
-        if (!_ideateGate.Wait(0))
+        if (!OperationGates.Ideation.Wait(0))
         {
             return "Ideation is already running — try again when it finishes.";
         }
@@ -649,7 +634,7 @@ internal sealed class TelegramCommandService(
                 try
                 {
                     var progress = await progressNotifier.StartAsync(
-                        "Advisor · starting pipeline self-review…", CancellationToken.None);
+                        "🧭 Advisor · starting pipeline self-review…", CancellationToken.None);
 
                     using var scope = scopeFactory.CreateScope();
                     var ideation = scope.ServiceProvider.GetRequiredService<IdeationService>();
@@ -673,7 +658,7 @@ internal sealed class TelegramCommandService(
                 }
                 finally
                 {
-                    _ideateGate.Release();
+                    OperationGates.Ideation.Release();
                 }
             },
             CancellationToken.None);
@@ -687,41 +672,43 @@ internal sealed class TelegramCommandService(
         var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
 
         var ideas = await db.Ideas
+            .Where(i => i.Category != "meta")
             .OrderByDescending(i => i.Id)
             .Take(20)
             .ToListAsync(cancellationToken);
+        var metaCount = await db.Ideas.CountAsync(i => i.Category == "meta", cancellationToken);
 
         if (ideas.Count == 0)
         {
-            return "No ideas yet — run /ideate to spin up sessions.";
+            return "No product ideas yet — the autopilot bootstraps one run on startup, or /ideate 3 now.";
         }
 
         var rated = ideas
-            .Select(i => new { Idea = i, Rating = ComputeRating(i) })
+            .Select(i => new { Idea = i, Rating = IdeaJson.ComputeRating(i) })
             .OrderByDescending(x => x.Idea.Status is "hot" or "validated" or "candidate")
             .ThenByDescending(x => x.Idea.Status == "hot")
             .ThenByDescending(x => x.Rating)
             .ThenByDescending(x => x.Idea.Id)
             .Take(12);
 
-        var builder = new StringBuilder("<b>Ideas</b> (candidates first, by rating)\n");
+        var builder = new StringBuilder("<b>💡 Ideas</b> — 🔥 hot · ✅ validated · 🟡 candidate · ☠️ dead\n\n");
         foreach (var entry in rated)
         {
-            var marker = entry.Idea.Status switch
-            {
-                "hot" => "HOT",
-                "validated" => "ok",
-                "candidate" => "LIVE",
-                _ => "dead",
-            };
-            builder.Append("• #").Append(entry.Idea.Id)
-                .Append(" r").Append(entry.Rating.ToString("F2", CultureInfo.InvariantCulture))
-                .Append(" [").Append(marker).Append("] [").Append(entry.Idea.Category)
-                .Append("/e").Append(entry.Idea.EffortScale).Append("] ")
+            builder.Append(IdeaEngine.Core.Common.Ui.IdeaStatus(entry.Idea.Status))
+                .Append(" <b>#").Append(entry.Idea.Id).Append("</b> ")
+                .Append(entry.Idea.Origin == "operator" ? "🧑 " : string.Empty)
+                .Append('r').Append(entry.Rating.ToString("F2", CultureInfo.InvariantCulture))
+                .Append(" <i>").Append(entry.Idea.Category)
+                .Append("/e").Append(entry.Idea.EffortScale).Append("</i> ")
                 .Append(System.Net.WebUtility.HtmlEncode(entry.Idea.Title)).Append('\n');
         }
 
-        builder.Append("\n/idea &lt;id&gt; for the full trace");
+        builder.Append("\n/idea 5 for the full trace");
+        if (metaCount > 0)
+        {
+            builder.Append(" · ").Append(metaCount).Append(" pipeline proposals live in the journal");
+        }
+
         return builder.ToString();
     }
 
@@ -769,7 +756,7 @@ internal sealed class TelegramCommandService(
         var signalToIdea = new Dictionary<long, (long IdeaId, string Status)>();
         foreach (var idea in ideas)
         {
-            foreach (var signalId in ParseEvidence(idea.EvidenceJson))
+            foreach (var signalId in IdeaJson.ParseEvidence(idea.EvidenceJson))
             {
                 signalToIdea.TryAdd(signalId, (idea.Id, idea.Status));
             }
@@ -794,7 +781,7 @@ internal sealed class TelegramCommandService(
         var glances = await glanceService.EnsureGlancesAsync(
             [.. top.Select(s => new GlanceInput(s.Id, s.Summary, s.Kind))], cancellationToken);
 
-        var builder = new StringBuilder("<b>Best signals · 7 days</b>\n");
+        var builder = new StringBuilder("<b>🏆 Best signals · 7 days</b>\n");
         var rank = 1;
         foreach (var signal in top)
         {
@@ -804,7 +791,7 @@ internal sealed class TelegramCommandService(
 
             builder.Append(rank++).Append(". v")
                 .Append(signal.Value.ToString("F2", CultureInfo.InvariantCulture))
-                .Append(" [").Append(signal.Kind).Append("] ")
+                .Append(' ').Append(IdeaEngine.Core.Common.Ui.Kind(signal.Kind)).Append(' ')
                 .Append(System.Net.WebUtility.HtmlEncode(line));
 
             if (signal.Url is { Length: > 0 })
@@ -814,8 +801,7 @@ internal sealed class TelegramCommandService(
 
             if (signalToIdea.TryGetValue(signal.Id, out var idea))
             {
-                builder.Append(" → #").Append(idea.IdeaId)
-                    .Append(idea.Status == "candidate" ? " LIVE" : " dead");
+                builder.Append(" → ").Append(IdeaEngine.Core.Common.Ui.IdeaStatus(idea.Status)).Append('#').Append(idea.IdeaId);
             }
 
             builder.Append('\n');
@@ -841,7 +827,7 @@ internal sealed class TelegramCommandService(
         }
 
         var skeptic = idea.SkepticJson is null ? null : LlmJson.TryParse<SkepticReview>(idea.SkepticJson);
-        var rating = ComputeRating(idea);
+        var rating = IdeaJson.ComputeRating(idea);
         var lastResearch = await db.ResearchReports
             .Where(r => r.IdeaId == ideaId)
             .OrderByDescending(r => r.Id)
@@ -849,7 +835,7 @@ internal sealed class TelegramCommandService(
             .FirstOrDefaultAsync(cancellationToken);
 
         var builder = new StringBuilder();
-        builder.Append("<b>#").Append(idea.Id).Append(" · ")
+        builder.Append(IdeaEngine.Core.Common.Ui.IdeaStatus(idea.Status)).Append(" <b>#").Append(idea.Id).Append(" · ")
             .Append(System.Net.WebUtility.HtmlEncode(idea.Title)).Append("</b>\n")
             .Append(idea.Status).Append(" · ")
             .Append(idea.Category).Append(" · effort ").Append(idea.EffortScale)
@@ -862,7 +848,7 @@ internal sealed class TelegramCommandService(
 
         if (lastResearch is not null)
         {
-            builder.Append("<b>Research:</b> ").Append(lastResearch.Verdict.ToUpperInvariant())
+            builder.Append("<b>🔎 Research:</b> ").Append(IdeaEngine.Core.Common.Ui.Verdict(lastResearch.Verdict))
                 .Append(" (conf ").Append(lastResearch.Confidence.ToString("F2", CultureInfo.InvariantCulture))
                 .Append(", ").Append(lastResearch.SearchesUsed).Append(" searches, $")
                 .Append(lastResearch.CostUsd.ToString("F3", CultureInfo.InvariantCulture)).Append(")\n");
@@ -874,7 +860,7 @@ internal sealed class TelegramCommandService(
 
         if (skeptic is not null)
         {
-            builder.Append("\n<b>Skeptic</b> (").Append(skeptic.Verdict ?? "?")
+            builder.Append("\n<b>🥊 Skeptic</b> (").Append(skeptic.Verdict ?? "?")
                 .Append(", conf ").Append(skeptic.Confidence.ToString("F2", CultureInfo.InvariantCulture)).Append(")\n");
 
             foreach (var reason in (skeptic.KillReasons ?? []).Concat(skeptic.Weaknesses ?? []).Take(3))
@@ -884,7 +870,7 @@ internal sealed class TelegramCommandService(
 
             if (skeptic.ResearchQuestions is { Count: > 0 } questions)
             {
-                builder.Append("<b>To research</b>\n");
+                builder.Append("<b>❓ To research</b>\n");
                 foreach (var question in questions.Take(5))
                 {
                     builder.Append("? ").Append(System.Net.WebUtility.HtmlEncode(question)).Append('\n');
@@ -892,7 +878,7 @@ internal sealed class TelegramCommandService(
             }
         }
 
-        var evidenceIds = ParseEvidence(idea.EvidenceJson).Take(6).ToList();
+        var evidenceIds = IdeaJson.ParseEvidence(idea.EvidenceJson).Take(6).ToList();
         if (evidenceIds.Count > 0)
         {
             var cited = await db.Signals
@@ -900,7 +886,7 @@ internal sealed class TelegramCommandService(
                 .Select(s => new { s.Id, s.Summary, s.RawItem!.Url, s.RawItem.Source })
                 .ToListAsync(cancellationToken);
 
-            builder.Append("<b>Evidence</b>\n");
+            builder.Append("<b>🎯 Evidence</b>\n");
             foreach (var signal in cited)
             {
                 builder.Append('S').Append(signal.Id).Append(' ')
@@ -928,34 +914,8 @@ internal sealed class TelegramCommandService(
         }
     }
 
-    private static double ComputeRating(IdeaEngine.Infrastructure.Persistence.Entities.IdeaEntity idea)
-    {
-        var scores = SafeDeserialize<Dictionary<string, double>>(idea.ScoresJson);
-        var skeptic = SafeDeserialize<SkepticReview>(idea.SkepticJson);
-        return IdeaScoring.Rating(scores, skeptic?.Confidence ?? 0);
-    }
 
-    private static List<long> ParseEvidence(string? evidenceJson) =>
-        SafeDeserialize<List<long>>(evidenceJson) ?? [];
 
-    /// <summary>For OUR OWN serialized jsonb columns (not LLM output - that's LlmJson's job).</summary>
-    private static T? SafeDeserialize<T>(string? json)
-        where T : class
-    {
-        if (string.IsNullOrWhiteSpace(json))
-        {
-            return null;
-        }
-
-        try
-        {
-            return System.Text.Json.JsonSerializer.Deserialize<T>(json, LlmJson.Options);
-        }
-        catch (System.Text.Json.JsonException)
-        {
-            return null;
-        }
-    }
 
     private string BuildConfig()
     {

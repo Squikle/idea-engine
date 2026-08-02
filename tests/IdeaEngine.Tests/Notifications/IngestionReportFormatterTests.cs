@@ -20,9 +20,9 @@ public sealed class IngestionReportFormatterTests
             ]),
         ]);
 
-        var html = IngestionReportFormatter.Format(report);
+        var html = IngestionReportFormatter.Format(report, TimeZoneInfo.Utc);
 
-        Assert.Contains("<b>Collected · 02 Aug 14:30 UTC</b>", html, StringComparison.Ordinal);
+        Assert.Contains("<b>📥 Collected · 02 Aug 14:30 UTC</b>", html, StringComparison.Ordinal);
         Assert.Contains("HackerNews: 41 new · 14 known", html, StringComparison.Ordinal);
         Assert.Contains("<a href=\"https://example.com/1\">Why are hearing aids still $4000?</a> — 510 pts, 301 comments",
             html, StringComparison.Ordinal);
@@ -44,7 +44,7 @@ public sealed class IngestionReportFormatterTests
             new SourceIngestResult(SourceKind.FourChan, 4, 4, 0, 0, 1, chanItems),
         ]);
 
-        var html = IngestionReportFormatter.Format(report);
+        var html = IngestionReportFormatter.Format(report, TimeZoneInfo.Utc);
 
         Assert.Contains("1. chan 4", html, StringComparison.Ordinal);
         Assert.Contains("5. hn 4", html, StringComparison.Ordinal);
@@ -60,7 +60,7 @@ public sealed class IngestionReportFormatterTests
                 [new IngestedHighlight("Tool <b>for & by</b> makers", null, 10, 1)]),
         ]);
 
-        var html = IngestionReportFormatter.Format(report);
+        var html = IngestionReportFormatter.Format(report, TimeZoneInfo.Utc);
 
         Assert.Contains("Tool &lt;b&gt;for &amp; by&lt;/b&gt; makers", html, StringComparison.Ordinal);
     }
@@ -73,7 +73,7 @@ public sealed class IngestionReportFormatterTests
             new SourceIngestResult(SourceKind.HackerNews, 20, 0, 20, 0, 3, []),
         ]);
 
-        var html = IngestionReportFormatter.Format(report);
+        var html = IngestionReportFormatter.Format(report, TimeZoneInfo.Utc);
 
         Assert.Contains("Nothing new this cycle.", html, StringComparison.Ordinal);
     }
@@ -86,7 +86,7 @@ public sealed class IngestionReportFormatterTests
             new SourceIngestResult(SourceKind.HackerNews, 0, 0, 0, 1, 0.4, []),
         ]);
 
-        var html = IngestionReportFormatter.Format(report);
+        var html = IngestionReportFormatter.Format(report, TimeZoneInfo.Utc);
 
         Assert.Contains("HackerNews: failed", html, StringComparison.Ordinal);
     }
@@ -101,7 +101,7 @@ public sealed class IngestionReportFormatterTests
                 [new IngestedHighlight(longTitle, null, 10, 1)]),
         ]);
 
-        var html = IngestionReportFormatter.Format(report);
+        var html = IngestionReportFormatter.Format(report, TimeZoneInfo.Utc);
 
         Assert.Contains("xxx…", html, StringComparison.Ordinal);
         Assert.DoesNotContain(longTitle, html, StringComparison.Ordinal);

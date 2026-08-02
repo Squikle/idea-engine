@@ -62,8 +62,8 @@ internal sealed class StartupSummaryService(
 
             var section = ChangelogParser.TryGetSection(ReadEmbeddedChangelog(), version);
             var header = state is null
-                ? $"<b>idea-engine {version}</b>"
-                : $"<b>Updated {state.Value} → {version}</b>";
+                ? $"<b>🚀 idea-engine {version}</b>"
+                : $"<b>🚀 Updated {state.Value} → {version}</b>";
             var body = string.Empty;
             if (section is not null)
             {

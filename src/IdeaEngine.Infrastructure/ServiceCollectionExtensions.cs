@@ -11,6 +11,7 @@ using IdeaEngine.Infrastructure.Sources.FourChan;
 using IdeaEngine.Infrastructure.Sources.HackerNews;
 using IdeaEngine.Infrastructure.Sources.Lemmy;
 using IdeaEngine.Infrastructure.Sources.RedditRss;
+using IdeaEngine.Infrastructure.Sources.YouTube;
 using IdeaEngine.Infrastructure.Triage;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -28,6 +29,10 @@ public static class ServiceCollectionExtensions
         IConfiguration configuration)
     {
         services.TryAddSingleton(TimeProvider.System);
+
+        // Owner-facing times render in this zone; storage stays UTC.
+        var timeZoneId = configuration["IdeaEngine:TimeZone"] ?? "America/Toronto";
+        services.TryAddSingleton(TimeZoneInfo.FindSystemTimeZoneById(timeZoneId));
 
         services.AddDbContext<IdeaEngineDbContext>(dbOptions => dbOptions
             .UseNpgsql(
@@ -83,6 +88,11 @@ public static class ServiceCollectionExtensions
             })
             .AddStandardResilienceHandler();
         services.AddScoped<Research.ResearchService>();
+        services.AddSingleton<Research.ResearchCoordinator>();
+        services.AddScoped<Reporting.DigestService>();
+        services.AddScoped<Maintenance.RetentionService>();
+        services.Configure<Autopilot.AutopilotOptions>(configuration.GetSection("IdeaEngine:Autopilot"));
+        services.Configure<Maintenance.RetentionOptions>(configuration.GetSection("IdeaEngine:Retention"));
     }
 
     private static void ConfigureLlmResilience(Microsoft.Extensions.Http.Resilience.HttpStandardResilienceOptions options)
@@ -140,6 +150,7 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<ITelegramBotClient>(),
             telegram.AdminChatId!.Value,
             sp.GetRequiredService<TimeProvider>(),
+            sp.GetRequiredService<TimeZoneInfo>(),
             sp.GetRequiredService<ILogger<TelegramStatusBoard>>()));
         services.AddSingleton<IProgressNotifier>(sp => new TelegramProgressNotifier(
             sp.GetRequiredService<ITelegramBotClient>(),
@@ -174,10 +185,15 @@ public static class ServiceCollectionExtensions
         services.AddTransient<ISourceAdapter>(sp => sp.GetRequiredService<FourChanAdapter>());
 
         services.Configure<BlueskyOptions>(configuration.GetSection("IdeaEngine:Sources:Bluesky"));
+        services.PostConfigure<BlueskyOptions>(o =>
+        {
+            o.Identifier ??= configuration["BLUESKY_IDENTIFIER"];
+            o.AppPassword ??= configuration["BLUESKY_APP_PASSWORD"];
+        });
         services
             .AddHttpClient<BlueskyAdapter>(client =>
             {
-                client.BaseAddress = new Uri("https://public.api.bsky.app/");
+                client.BaseAddress = new Uri("https://bsky.social/");
                 client.Timeout = TimeSpan.FromSeconds(30);
                 client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", userAgent);
             })
@@ -204,8 +220,20 @@ public static class ServiceCollectionExtensions
                 client.Timeout = TimeSpan.FromSeconds(30);
                 client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", userAgent);
             })
-            .AddStandardResilienceHandler();
+            // Reddit answers 429 to bursts; rapid retries only dig the hole deeper.
+            .AddStandardResilienceHandler(o => o.Retry.MaxRetryAttempts = 1);
         services.AddTransient<ISourceAdapter>(sp => sp.GetRequiredService<RedditRssAdapter>());
+
+        services.Configure<YouTubeOptions>(configuration.GetSection("IdeaEngine:Sources:YouTube"));
+        services.PostConfigure<YouTubeOptions>(o => o.ApiKey ??= configuration["YOUTUBE_API_KEY"]);
+        services
+            .AddHttpClient<YouTubeAdapter>(client =>
+            {
+                client.BaseAddress = new Uri("https://www.googleapis.com/youtube/v3/");
+                client.Timeout = TimeSpan.FromSeconds(30);
+            })
+            .AddStandardResilienceHandler();
+        services.AddTransient<ISourceAdapter>(sp => sp.GetRequiredService<YouTubeAdapter>());
     }
 
     private static string BuildUserAgent(IConfiguration configuration)
