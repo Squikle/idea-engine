@@ -105,6 +105,9 @@ internal sealed class JobRunnerHostedService(
             case "research":
                 await ExecuteResearchAsync(job, cancellationToken);
                 break;
+            case "dig":
+                await ExecuteDigAsync(job, cancellationToken);
+                break;
             default:
                 logger.LogWarning("Unknown job kind {Kind} (#{JobId}), marking done", job.Kind, job.Id);
                 break;
@@ -179,6 +182,35 @@ internal sealed class JobRunnerHostedService(
             CancellationToken.None);
         await SendReportWithButtonsAsync(result, cancellationToken);
         await MaybeAutoAppealAsync(result, cancellationToken);
+    }
+
+    private async Task ExecuteDigAsync(JobEntity job, CancellationToken cancellationToken)
+    {
+        var payload = JsonSerializer.Deserialize<DigJobPayload>(job.PayloadJson, LlmJson.Options)
+            ?? throw new InvalidOperationException("dig payload unreadable");
+
+        var progress = await progressNotifier.StartAsync(
+            $"⛏ Dig (job #{job.Id}) · “{IdeaEngine.Core.Common.TextClip.Clip(payload.Topic, 40)}”…",
+            job.OriginMessageId, cancellationToken);
+        await SaveProgressIdAsync(job.Id, progress.MessageId, cancellationToken);
+
+        IdeaEngine.Infrastructure.Research.DigRunResult result;
+        using (var scope = scopeFactory.CreateScope())
+        {
+            var dig = scope.ServiceProvider.GetRequiredService<IdeaEngine.Infrastructure.Research.DigService>();
+            result = await dig.RunAsync(payload.Topic, progress, cancellationToken);
+        }
+
+        if (result.StoppedReason is { } reason)
+        {
+            await progress.CompleteAsync($"⛏ ⛔ stopped · {reason}", CancellationToken.None);
+            await FailWithButtonsAsync(job, null, reason, cancellationToken);
+            return;
+        }
+
+        await progress.CompleteAsync(
+            $"⛏ ✅ done · {result.SpawnedIdeas} idea(s) spawned · map below", CancellationToken.None);
+        await notifier.SendAsync(result.Html, cancellationToken);
     }
 
     private async Task ExecuteResearchAsync(JobEntity job, CancellationToken cancellationToken)

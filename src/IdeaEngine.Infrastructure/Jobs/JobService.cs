@@ -11,6 +11,9 @@ public sealed record DropJobPayload(
     [property: JsonPropertyName("pitch")] string Pitch,
     [property: JsonPropertyName("idea_id")] long? IdeaId);
 
+public sealed record DigJobPayload(
+    [property: JsonPropertyName("topic")] string Topic);
+
 public sealed record ResearchJobPayload(
     [property: JsonPropertyName("idea_id")] long IdeaId);
 

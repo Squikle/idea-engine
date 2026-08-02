@@ -5,6 +5,17 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.19.0 — 2026-08-02
+
+- /dig <topic> - niche excavation as a durable job: plans 4-6 sub-branches
+  (products, apps, services, content, arbitrage angle), searches each, returns
+  a 🟢🟡🔴 saturation map and spawns 0-4 candidate ideas (origin "dig") with a
+  ready /research batch line; "no gaps worth spawning" is an honest outcome;
+  works for pain roots too (/dig procrastination); new "dig" stage, $1/day cap
+- /audit + weekly auto-audit: finds ideas that never reached research (with a
+  ready batch command), failed jobs, unreviewed verdicts and silent auto-kills;
+  nano reflection paragraph appended to journal/advice.md for the architect
+
 ## 0.18.0 — 2026-08-02
 
 - Playbooks: operator wisdom as system behavior - 11 lenses (psych, absurd,

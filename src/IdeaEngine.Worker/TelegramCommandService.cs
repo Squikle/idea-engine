@@ -104,6 +104,8 @@ internal sealed class TelegramCommandService(
                 new BotCommand { Command = "drop", Description = "submit YOUR idea: shape, skeptic, web research" },
                 new BotCommand { Command = "research", Description = "web-research a candidate idea" },
                 new BotCommand { Command = "queue", Description = "jobs: running, waiting, failed" },
+                new BotCommand { Command = "dig", Description = "excavate a niche/topic into opportunities" },
+                new BotCommand { Command = "audit", Description = "find ideas that fell through the cracks" },
                 new BotCommand { Command = "verify", Description = "mark idea as reviewed by you" },
                 new BotCommand { Command = "note", Description = "argue: attach a note the next research must address" },
                 new BotCommand { Command = "appeal", Description = "stronger model reviews a verdict" },
@@ -169,6 +171,8 @@ internal sealed class TelegramCommandService(
                 "ideate" => StartIdeate(argument),
                 "drop" => await StartDropAsync(argument, cancellationToken),
                 "research" => await StartResearchAsync(argument, cancellationToken),
+                "dig" => await StartDigAsync(argument, cancellationToken),
+                "audit" => StartAudit(),
                 "kill" => await SetIdeaStatusAsync(argument, "dismissed", cancellationToken),
                 "verify" => await VerifyIdeaAsync(argument, cancellationToken),
                 "note" => await AddNoteAsync(argument, cancellationToken),
@@ -607,6 +611,55 @@ internal sealed class TelegramCommandService(
             parseMode: ParseMode.Html,
             cancellationToken: cancellationToken);
         return string.Empty;
+    }
+
+    private async Task<string> StartDigAsync(string? argument, CancellationToken cancellationToken)
+    {
+        var topic = argument?.Trim();
+        if (topic is null || topic.Length < 3)
+        {
+            return "Usage: /dig cycling — excavates a niche/topic/pain into a saturation map + spawned ideas";
+        }
+
+        var ack = await _bot!.SendMessage(
+            chatId: _adminChatId, text: "⛏ queuing…", cancellationToken: cancellationToken);
+
+        using var scope = scopeFactory.CreateScope();
+        var jobs = scope.ServiceProvider.GetRequiredService<JobService>();
+        var (jobId, position) = await jobs.EnqueueAsync(
+            "dig", new DigJobPayload(topic), ack.MessageId, cancellationToken);
+
+        await _bot!.EditMessageText(
+            chatId: _adminChatId,
+            messageId: ack.MessageId,
+            text: $"⛏ <b>Job #{jobId}</b> queued · position {position} · “{System.Net.WebUtility.HtmlEncode(IdeaEngine.Core.Common.TextClip.Clip(topic, 50))}”\n" +
+                "<i>The live progress log will reply to THIS message. /queue for overview.</i>",
+            parseMode: ParseMode.Html,
+            cancellationToken: cancellationToken);
+        return string.Empty;
+    }
+
+    private string StartAudit()
+    {
+        _ = Task.Run(
+            async () =>
+            {
+                try
+                {
+                    using var scope = scopeFactory.CreateScope();
+                    var audit = scope.ServiceProvider.GetRequiredService<IdeaEngine.Infrastructure.Maintenance.AuditService>();
+                    var result = await audit.RunAsync(CancellationToken.None);
+                    await notifier.SendAsync(result.Html, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Audit failed");
+                    await notifier.SendAsync("🧾 Audit crashed — check logs.", CancellationToken.None);
+                }
+            },
+            CancellationToken.None);
+
+        return "🧾 Auditing the pipeline for leaks…";
     }
 
     private async Task<string> StartResearchAsync(string? argument, CancellationToken cancellationToken)
@@ -1514,6 +1567,8 @@ internal sealed class TelegramCommandService(
         /playbooks — the lens list (psych, absurd, nostalgia, copycat…)
         /drop your pitch here — YOUR idea: shaped → skeptic → web research
         /research 20 21 24 — web-validate one or several ideas
+        /dig cycling — niche excavation: saturation map + spawned candidate ideas
+        /audit — leaks check: unresearched ideas, failed jobs, unreviewed verdicts
         /kill 5 · /promote 5 — override any verdict with YOUR decision
         /queue — jobs overview; replies to the live log of the running job
         /verify 5 — mark reviewed (default /ideas hides verified) · /bump — +$5 today
