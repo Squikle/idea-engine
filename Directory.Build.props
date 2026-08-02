@@ -4,6 +4,8 @@
     Individual .csproj files should stay minimal: packages + references only.
   -->
   <PropertyGroup>
+    <!-- Single source of truth for the app version; see CHANGELOG.md. -->
+    <Version>0.3.0</Version>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>

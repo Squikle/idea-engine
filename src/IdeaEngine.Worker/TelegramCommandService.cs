@@ -1,10 +1,12 @@
 using System.Globalization;
 using System.Text;
+using IdeaEngine.Core.Notifications;
 using IdeaEngine.Core.Pipeline;
 using IdeaEngine.Core.Sources;
 using IdeaEngine.Infrastructure.Ingestion;
 using IdeaEngine.Infrastructure.Notifications;
 using IdeaEngine.Infrastructure.Persistence;
+using IdeaEngine.Infrastructure.Triage;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Telegram.Bot;
@@ -15,12 +17,14 @@ namespace IdeaEngine.Worker;
 
 /// <summary>
 /// Long-polling command listener. Only the admin chat is honored; everything else is
-/// ignored silently. Commands: /status /top /collect [source] /config /help.
+/// ignored silently. Commands: /status /signals /top /costs /collect /analyze /config /help.
 /// </summary>
 internal sealed class TelegramCommandService(
     IServiceProvider serviceProvider,
     IServiceScopeFactory scopeFactory,
     IngestionCoordinator coordinator,
+    TriageCoordinator triageCoordinator,
+    INotifier notifier,
     TimeProvider timeProvider,
     IOptions<IngestionOptions> ingestionOptions,
     ILogger<TelegramCommandService> logger) : BackgroundService
@@ -80,8 +84,11 @@ internal sealed class TelegramCommandService(
             await _bot!.SetMyCommands(
             [
                 new BotCommand { Command = "status", Description = "pipeline state, counts, next run" },
+                new BotCommand { Command = "signals", Description = "latest extracted signals" },
                 new BotCommand { Command = "top", Description = "top items from the last 24h" },
+                new BotCommand { Command = "costs", Description = "AI spend, last 7 days" },
                 new BotCommand { Command = "collect", Description = "run a cycle now (optionally one source)" },
+                new BotCommand { Command = "analyze", Description = "run AI triage on the queue now" },
                 new BotCommand { Command = "config", Description = "current configuration" },
                 new BotCommand { Command = "help", Description = "command list" },
             ], cancellationToken: cancellationToken);
@@ -123,7 +130,10 @@ internal sealed class TelegramCommandService(
             {
                 "status" => await BuildStatusAsync(cancellationToken),
                 "top" => await BuildTopAsync(cancellationToken),
+                "signals" => await BuildSignalsAsync(cancellationToken),
+                "costs" => await BuildCostsAsync(cancellationToken),
                 "collect" => StartCollect(argument),
+                "analyze" => StartAnalyze(),
                 "config" => BuildConfig(),
                 "help" or "start" => BuildHelp(),
                 _ => $"Unknown command: /{command} — try /help",
@@ -239,6 +249,97 @@ internal sealed class TelegramCommandService(
         return builder.ToString().TrimEnd();
     }
 
+    private async Task<string> BuildSignalsAsync(CancellationToken cancellationToken)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
+
+        var signals = await db.Signals
+            .OrderByDescending(s => s.Id)
+            .Take(12)
+            .Select(s => new
+            {
+                s.Kind,
+                s.Summary,
+                s.CommercialSentiment,
+                s.Confidence,
+                s.RawItem!.Url,
+                s.RawItem.Source,
+            })
+            .ToListAsync(cancellationToken);
+
+        if (signals.Count == 0)
+        {
+            return "No signals extracted yet — triage may still be draining the queue (/status).";
+        }
+
+        var builder = new StringBuilder("<b>Latest signals</b>\n");
+        foreach (var signal in signals)
+        {
+            builder.Append("• <b>").Append(signal.Kind).Append("</b> ")
+                .Append(System.Net.WebUtility.HtmlEncode(signal.Summary));
+
+            builder.Append(" <i>(").Append(signal.CommercialSentiment.Replace('_', ' '))
+                .Append(", ").Append((signal.Confidence * 100).ToString("F0", CultureInfo.InvariantCulture))
+                .Append("%)</i>");
+
+            if (signal.Url is { Length: > 0 })
+            {
+                builder.Append(" <a href=\"").Append(signal.Url).Append("\">[").Append(signal.Source).Append("]</a>");
+            }
+
+            builder.Append('\n');
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private async Task<string> BuildCostsAsync(CancellationToken cancellationToken)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
+        var today = DateOnly.FromDateTime(timeProvider.GetUtcNow().UtcDateTime);
+        var weekAgo = today.AddDays(-7);
+
+        var rows = await db.AiLedger
+            .Where(e => e.Day >= weekAgo)
+            .GroupBy(e => new { e.Day, e.Stage, e.Model })
+            .Select(g => new
+            {
+                g.Key.Day,
+                g.Key.Stage,
+                g.Key.Model,
+                Cost = g.Sum(e => e.CostUsd),
+                TokensIn = g.Sum(e => e.TokensIn),
+                TokensOut = g.Sum(e => e.TokensOut),
+                Calls = g.Count(),
+            })
+            .OrderByDescending(r => r.Day)
+            .ToListAsync(cancellationToken);
+
+        if (rows.Count == 0)
+        {
+            return "No AI spend recorded yet.";
+        }
+
+        var builder = new StringBuilder("<b>AI costs (7 days)</b>\n");
+        foreach (var row in rows)
+        {
+            builder.Append(row.Day == today ? "today" : row.Day.ToString("dd MMM", CultureInfo.InvariantCulture))
+                .Append(" · ").Append(row.Stage)
+                .Append(" · ").Append(row.Calls).Append(" calls · ")
+                .Append((row.TokensIn / 1000.0).ToString("F0", CultureInfo.InvariantCulture)).Append("k in / ")
+                .Append((row.TokensOut / 1000.0).ToString("F0", CultureInfo.InvariantCulture)).Append("k out · $")
+                .Append(row.Cost.ToString("F4", CultureInfo.InvariantCulture))
+                .Append('\n');
+        }
+
+        builder.Append("\nTotal: $")
+            .Append(rows.Sum(r => r.Cost).ToString("F4", CultureInfo.InvariantCulture));
+
+        return builder.ToString();
+    }
+
     private string StartCollect(string? argument)
     {
         SourceKind? only = null;
@@ -275,6 +376,41 @@ internal sealed class TelegramCommandService(
         return only is { } k ? $"Collecting {k} now…" : "Collecting all sources now…";
     }
 
+    private string StartAnalyze()
+    {
+        if (triageCoordinator.IsRunning)
+        {
+            return "Analysis is already running — /status to watch.";
+        }
+
+        _ = Task.Run(
+            async () =>
+            {
+                try
+                {
+                    var result = await triageCoordinator.TryDrainAsync(CancellationToken.None);
+                    if (result is { Analyzed: > 0 } or { Capped: true })
+                    {
+                        var summary = result.Capped
+                            ? $"Analysis stopped at daily cap: {result.Analyzed} items, +{result.SignalsFound} signals, ${result.CostUsd:F4} ({result.Queued} left)"
+                            : $"Analysis done: {result.Analyzed} items, +{result.SignalsFound} signals, ${result.CostUsd:F4}";
+                        await notifier.SendAsync(summary, CancellationToken.None);
+                    }
+                    else if (result is { Analyzed: 0 })
+                    {
+                        await notifier.SendAsync("Nothing queued for analysis.", CancellationToken.None);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Manual analysis failed");
+                }
+            },
+            CancellationToken.None);
+
+        return "Analyzing the queue now…";
+    }
+
     private string BuildConfig()
     {
         var config = ingestionOptions.Value;
@@ -294,9 +430,12 @@ internal sealed class TelegramCommandService(
     private static string BuildHelp() =>
         """
         /status — pipeline state, counts by source/stage, recent runs
+        /signals — latest extracted product-opportunity signals
         /top — best items of the last 24h
+        /costs — AI spend, last 7 days
         /collect — run a full cycle now
         /collect hn|4chan|bluesky|lemmy|reddit — one source only
+        /analyze — run AI triage on queued items now
         /config — current configuration
         """;
 

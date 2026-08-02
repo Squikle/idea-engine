@@ -22,6 +22,7 @@ try
     builder.Services.AddHostedService<StatusLifecycleService>(); // first: others report into it
     builder.Services.AddHostedService<StartupSummaryService>();
     builder.Services.AddHostedService<IngestionHostedService>();
+    builder.Services.AddHostedService<TriageHostedService>();
     builder.Services.AddHostedService<TelegramCommandService>();
 
     // Last-resort exit hook: unhandled exceptions on non-host threads.

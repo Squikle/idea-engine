@@ -46,6 +46,8 @@
 ## Conventions
 
 - **Commits:** Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`, `test:`, `refactor:`).
+- **Versioning:** semver in `Directory.Build.props` + point-by-point entry in
+  `CHANGELOG.md` for every user-visible change. Bump before the release commit.
 - **Style:** file-scoped namespaces, primary constructors where natural, `var` freely,
   warnings are errors. `.editorconfig` is authoritative.
 - **Tests:** every behavioral change ships with tests; `dotnet test` must be green before

@@ -1,5 +1,8 @@
+using System.Net.Http.Headers;
 using IdeaEngine.Core.Notifications;
+using IdeaEngine.Core.Pipeline;
 using IdeaEngine.Core.Sources;
+using IdeaEngine.Infrastructure.Ai;
 using IdeaEngine.Infrastructure.Ingestion;
 using IdeaEngine.Infrastructure.Notifications;
 using IdeaEngine.Infrastructure.Persistence;
@@ -8,6 +11,7 @@ using IdeaEngine.Infrastructure.Sources.FourChan;
 using IdeaEngine.Infrastructure.Sources.HackerNews;
 using IdeaEngine.Infrastructure.Sources.Lemmy;
 using IdeaEngine.Infrastructure.Sources.RedditRss;
+using IdeaEngine.Infrastructure.Triage;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -33,12 +37,41 @@ public static class ServiceCollectionExtensions
 
         AddSourceAdapters(services, configuration);
         AddTelegram(services, configuration);
+        AddAi(services, configuration);
 
         services.Configure<IngestionOptions>(configuration.GetSection("IdeaEngine:Ingestion"));
         services.AddScoped<IngestionService>();
         services.AddSingleton<IngestionCoordinator>();
 
         return services;
+    }
+
+    private static void AddAi(IServiceCollection services, IConfiguration configuration)
+    {
+        services.Configure<TriageOptions>(configuration.GetSection("IdeaEngine:Ai:Triage"));
+
+        var openRouterKey = configuration["OPENROUTER_API_KEY"];
+        services
+            .AddHttpClient<OpenRouterTriageAnalyzer>(client =>
+            {
+                client.BaseAddress = new Uri(
+                    configuration["IdeaEngine:Ai:OpenRouterBaseUrl"] ?? "https://openrouter.ai/api/v1/");
+                client.Timeout = TimeSpan.FromSeconds(90);
+                if (!string.IsNullOrWhiteSpace(openRouterKey))
+                {
+                    client.DefaultRequestHeaders.Authorization =
+                        new AuthenticationHeaderValue("Bearer", openRouterKey);
+                }
+
+                // OpenRouter attribution headers (optional, recommended).
+                client.DefaultRequestHeaders.Add("HTTP-Referer", "https://github.com/Squikle/idea-engine");
+                client.DefaultRequestHeaders.Add("X-Title", "idea-engine");
+            })
+            .AddStandardResilienceHandler();
+
+        services.AddTransient<ITriageAnalyzer>(sp => sp.GetRequiredService<OpenRouterTriageAnalyzer>());
+        services.AddScoped<TriageService>();
+        services.AddSingleton<TriageCoordinator>();
     }
 
     private static void AddTelegram(IServiceCollection services, IConfiguration configuration)

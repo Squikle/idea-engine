@@ -12,6 +12,8 @@ public sealed class IdeaEngineDbContext(DbContextOptions<IdeaEngineDbContext> op
 
     public DbSet<AiLedgerEntry> AiLedger => Set<AiLedgerEntry>();
 
+    public DbSet<SignalEntity> Signals => Set<SignalEntity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasPostgresExtension("vector");
@@ -51,6 +53,22 @@ public sealed class IdeaEngineDbContext(DbContextOptions<IdeaEngineDbContext> op
             entry.Property(x => x.Stage).HasMaxLength(64);
             entry.Property(x => x.Model).HasMaxLength(128);
             entry.Property(x => x.CostUsd).HasPrecision(10, 6);
+        });
+
+        modelBuilder.Entity<SignalEntity>(signal =>
+        {
+            signal.ToTable("signals");
+            signal.HasIndex(x => x.RawItemId);
+            signal.HasIndex(x => x.CreatedAt);
+            signal.Property(x => x.Kind).HasMaxLength(32);
+            signal.Property(x => x.Summary).HasMaxLength(1000);
+            signal.Property(x => x.Audience).HasMaxLength(300);
+            signal.Property(x => x.CommercialSentiment).HasMaxLength(48);
+            signal.Property(x => x.Model).HasMaxLength(128);
+            signal.HasOne(x => x.RawItem)
+                .WithMany()
+                .HasForeignKey(x => x.RawItemId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }
