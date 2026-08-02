@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using IdeaEngine.Core.Common;
 using IdeaEngine.Core.Notifications;
+using IdeaEngine.Core.Pipeline;
 using IdeaEngine.Infrastructure.Ai;
 using IdeaEngine.Infrastructure.Ideation;
 using IdeaEngine.Infrastructure.Persistence;
@@ -16,7 +17,8 @@ using Microsoft.Extensions.Options;
 namespace IdeaEngine.Infrastructure.Research;
 
 public sealed record ResearchRunResult(
-    string Html, string? Verdict, decimal CostUsd, int SearchesUsed, string? StoppedReason);
+    string Html, string? Verdict, decimal CostUsd, int SearchesUsed, string? StoppedReason,
+    long IdeaId = 0, double Score = 0, double Confidence = 0);
 
 /// <summary>
 /// Closure-driven validation: plan queries → search → synthesize → and while questions
@@ -222,9 +224,15 @@ public sealed class ResearchService(
             "Research #{IdeaId}: {Verdict} (conf {Confidence:F2}), {Rounds} rounds, {Pages} pages, ${Cost:F4}",
             idea.Id, verdict, report.Confidence, rounds, pagesRead, cost);
 
+        var unified = IdeaScoring.Compute(
+            SafeDeserialize<Dictionary<string, double>>(idea.ScoresJson),
+            skeptic?.Confidence ?? 0,
+            report.Scores,
+            report.Confidence);
+
         return new ResearchRunResult(
-            FormatReport(idea, verdict, report, openQuestions, cost, searchesUsed, rounds, pagesRead),
-            verdict, cost, searchesUsed, null);
+            FormatReport(idea, verdict, report, openQuestions, cost, searchesUsed, rounds, pagesRead, unified),
+            verdict, cost, searchesUsed, null, idea.Id, unified.Total, Math.Clamp(report.Confidence, 0, 1));
     }
 
     private async Task<int> SearchIntoAsync(
@@ -356,14 +364,17 @@ public sealed class ResearchService(
         decimal cost,
         int searches,
         int rounds,
-        int pagesRead)
+        int pagesRead,
+        IdeaScore unified)
     {
         var builder = new StringBuilder();
         builder.Append(Ui.Research).Append(" <b>Research #").Append(idea.Id).Append(" · ")
             .Append(WebUtility.HtmlEncode(idea.Title)).Append("</b>\n")
-            .Append("Verdict: <b>").Append(Ui.Verdict(verdict)).Append("</b> · confidence ")
+            .Append("Verdict: <b>").Append(Ui.Verdict(verdict)).Append("</b> → status ").Append(idea.Status).Append('\n')
+            .Append("⭐ <b>Score ").Append((unified.Total * 100).ToString("F0", CultureInfo.InvariantCulture))
+            .Append("%</b> <i>(opportunity strength)</i> · evidence ")
             .Append((report.Confidence * 100).ToString("F0", CultureInfo.InvariantCulture))
-            .Append("% → status ").Append(idea.Status).Append('\n');
+            .Append("% <i>(research solidity)</i>\n");
 
         var competitors = (report.Competitors ?? []).Take(6).ToList();
         if (competitors.Count > 0)

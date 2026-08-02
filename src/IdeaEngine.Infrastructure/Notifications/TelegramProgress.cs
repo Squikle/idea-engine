@@ -57,6 +57,8 @@ internal sealed class TelegramProgressHandle : IProgressHandle
     private string? _lastSentText;
     private DateTimeOffset _lastEditAt;
 
+    public int? MessageId => _messageId;
+
     public TelegramProgressHandle(
         ITelegramBotClient botClient,
         long chatId,
@@ -178,6 +180,8 @@ public sealed class NullProgressNotifier : IProgressNotifier
 internal sealed class NullProgressHandle : IProgressHandle
 {
     public static readonly NullProgressHandle Instance = new();
+
+    public int? MessageId => null;
 
     public Task UpdateAsync(string text, CancellationToken cancellationToken) => Task.CompletedTask;
 

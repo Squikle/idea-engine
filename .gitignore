@@ -25,3 +25,6 @@ logs/
 TestResults/
 coverage/
 *.trx
+
+# Local-only journals (advice log, idea inbox) - never public
+journal/

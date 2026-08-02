@@ -5,6 +5,20 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.16.0 — 2026-08-02
+
+- Research output shows BOTH numbers everywhere: ⭐N% opportunity strength +
+  evidence N% research solidity (report header, progress final line)
+- Human verification: /verify N, ✅ button on every research report (plus
+  🔁 re-research, 🔥 promote, ☠️ kill buttons); /ideas defaults to "top
+  unreviewed" (verified + dead hidden), new ✅ tab for reviewed ideas
+- /research 20 21 24 — queue several ideas in one command
+- /bump command + 💸 +$5 button on /status (raises today's caps; monthly stays)
+- /queue now REPLIES to the live log of the running job (tap the quote to jump)
+  and says so; ack cards remain the anchor for each job's own log
+- journal/ is local-only now (idea inbox + advice log never reach GitHub);
+  seeded journal/idea-inbox.md with 9 example ideas from the improvement session
+
 ## 0.15.0 — 2026-08-02
 
 - Queue UX: /drop and /research post an ack card (job #, queue position); the

@@ -27,8 +27,17 @@ public sealed class IdeaEntity
     /// <summary>candidate | validated | hot | dismissed.</summary>
     public required string Status { get; set; }
 
-    /// <summary>ai | operator (dropped via /drop).</summary>
+    /// <summary>ai | operator (dropped via /drop) | dig.</summary>
     public string Origin { get; set; } = "ai";
+
+    /// <summary>Owner has personally reviewed this idea (hides it from the default list).</summary>
+    public bool Verified { get; set; }
+
+    /// <summary>Operator notes/counter-arguments, jsonb array of {text, at}.</summary>
+    public string? NotesJson { get; set; }
+
+    /// <summary>Playbook lens key(s) used at ideation, space-separated.</summary>
+    public string? Playbook { get; set; }
 
     /// <summary>Adjacent applications of the same mechanic, jsonb array.</summary>
     public string? VariantsJson { get; set; }

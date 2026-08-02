@@ -74,6 +74,14 @@ public sealed class JobService(IdeaEngineDbContext db, TimeProvider timeProvider
         return job;
     }
 
+    public async Task SetProgressMessageAsync(long jobId, int? messageId, CancellationToken cancellationToken) =>
+        await db.Jobs
+            .Where(j => j.Id == jobId)
+            .ExecuteUpdateAsync(
+                s => s.SetProperty(j => j.ProgressMessageId, messageId)
+                    .SetProperty(j => j.UpdatedAt, timeProvider.GetUtcNow()),
+                cancellationToken);
+
     public async Task CheckpointAsync<T>(long jobId, T payload, CancellationToken cancellationToken)
     {
         var json = JsonSerializer.Serialize(payload, LlmJson.Options);

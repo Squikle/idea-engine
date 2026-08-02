@@ -92,6 +92,9 @@ public sealed class IdeaEngineDbContext(DbContextOptions<IdeaEngineDbContext> op
             idea.Property(x => x.DistributionNote).HasMaxLength(400);
             idea.Property(x => x.Status).HasMaxLength(24);
             idea.Property(x => x.Origin).HasMaxLength(16);
+            idea.HasIndex(x => x.Verified);
+            idea.Property(x => x.NotesJson).HasColumnType("jsonb");
+            idea.Property(x => x.Playbook).HasMaxLength(64);
             idea.Property(x => x.VariantsJson).HasColumnType("jsonb");
             idea.Property(x => x.EvidenceJson).HasColumnType("jsonb");
             idea.Property(x => x.ScoresJson).HasColumnType("jsonb");

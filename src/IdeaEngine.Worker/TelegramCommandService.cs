@@ -103,6 +103,8 @@ internal sealed class TelegramCommandService(
                 new BotCommand { Command = "drop", Description = "submit YOUR idea: shape, skeptic, web research" },
                 new BotCommand { Command = "research", Description = "web-research a candidate idea" },
                 new BotCommand { Command = "queue", Description = "jobs: running, waiting, failed" },
+                new BotCommand { Command = "verify", Description = "mark idea as reviewed by you" },
+                new BotCommand { Command = "bump", Description = "+$5 to today's AI caps" },
                 new BotCommand { Command = "kill", Description = "your verdict: dismiss an idea" },
                 new BotCommand { Command = "promote", Description = "your verdict: mark an idea hot" },
                 new BotCommand { Command = "ideas", Description = "recent ideas (live and killed)" },
@@ -152,7 +154,7 @@ internal sealed class TelegramCommandService(
         {
             var reply = command switch
             {
-                "status" => await BuildStatusAsync(cancellationToken),
+                "status" => await SendStatusAsync(cancellationToken),
                 "top" => await BuildTopAsync(cancellationToken),
                 "signals" => await BuildSignalsAsync(cancellationToken),
                 "best" => await BuildBestAsync(argument, cancellationToken),
@@ -164,6 +166,8 @@ internal sealed class TelegramCommandService(
                 "drop" => await StartDropAsync(argument, cancellationToken),
                 "research" => await StartResearchAsync(argument, cancellationToken),
                 "kill" => await SetIdeaStatusAsync(argument, "dismissed", cancellationToken),
+                "verify" => await VerifyIdeaAsync(argument, cancellationToken),
+                "bump" => await BumpBudgetAsync(cancellationToken),
                 "promote" => await SetIdeaStatusAsync(argument, "hot", cancellationToken),
                 "advise" => StartAdvise(),
                 "ideas" => await SendIdeasPageAsync(argument, cancellationToken),
@@ -187,6 +191,22 @@ internal sealed class TelegramCommandService(
             logger.LogError(ex, "Command /{Command} failed", command);
             await ReplyAsync($"/{command} failed: {ex.GetType().Name}", cancellationToken);
         }
+    }
+
+    private async Task<string> SendStatusAsync(CancellationToken cancellationToken)
+    {
+        var text = await BuildStatusAsync(cancellationToken);
+        await _bot!.SendMessage(
+            chatId: _adminChatId,
+            text: text,
+            parseMode: ParseMode.Html,
+            replyMarkup: new Telegram.Bot.Types.ReplyMarkups.InlineKeyboardMarkup(
+            [
+                [Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton.WithCallbackData("💸 +$5 today", "budget|bump|0")],
+            ]),
+            linkPreviewOptions: Telegram.Bot.Types.LinkPreviewOptions.Disabled,
+            cancellationToken: cancellationToken);
+        return string.Empty;
     }
 
     private async Task<string> BuildStatusAsync(CancellationToken cancellationToken)
@@ -549,9 +569,16 @@ internal sealed class TelegramCommandService(
 
     private async Task<string> StartResearchAsync(string? argument, CancellationToken cancellationToken)
     {
-        if (!long.TryParse(argument, out var ideaId))
+        var ids = (argument ?? string.Empty)
+            .Split([' ', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(t => long.TryParse(t, out var id) ? id : 0)
+            .Where(id => id > 0)
+            .Distinct()
+            .Take(10)
+            .ToList();
+        if (ids.Count == 0)
         {
-            return "Usage: /research 5 (ids are shown by /ideas)";
+            return "Usage: /research 5 — or several: /research 20 21 24";
         }
 
         var ack = await _bot!.SendMessage(
@@ -559,14 +586,19 @@ internal sealed class TelegramCommandService(
 
         using var scope = scopeFactory.CreateScope();
         var jobs = scope.ServiceProvider.GetRequiredService<JobService>();
-        var (jobId, position) = await jobs.EnqueueAsync(
-            "research", new ResearchJobPayload(ideaId), ack.MessageId, cancellationToken);
+        var lines = new List<string>();
+        foreach (var ideaId in ids)
+        {
+            var (jobId, position) = await jobs.EnqueueAsync(
+                "research", new ResearchJobPayload(ideaId), ack.MessageId, cancellationToken);
+            lines.Add($"🔎 job <b>#{jobId}</b> · pos {position} · idea #{ideaId} (/idea {ideaId})");
+        }
 
         await _bot!.EditMessageText(
             chatId: _adminChatId,
             messageId: ack.MessageId,
-            text: $"🔎 <b>Job #{jobId}</b> queued · position {position} · idea #{ideaId} (/idea {ideaId})\n" +
-                "<i>The live progress log will reply to THIS message. /queue for overview.</i>",
+            text: string.Join('\n', lines) +
+                "\n<i>Progress logs reply to THIS message. /queue for overview.</i>",
             parseMode: ParseMode.Html,
             cancellationToken: cancellationToken);
         return string.Empty;
@@ -617,18 +649,19 @@ internal sealed class TelegramCommandService(
         return string.Empty; // the progress message is the reply
     }
 
-    private static readonly string[] IdeaFilters = ["all", "top", "hot", "uncertain", "new", "dead"];
+    private static readonly string[] IdeaFilters = ["top", "all", "hot", "uncertain", "new", "dead", "seen"];
 
     private async Task<string> SendIdeasPageAsync(string? argument, CancellationToken cancellationToken)
     {
         var filter = argument?.Trim().ToLowerInvariant() switch
         {
-            "top" => "top",
+            "all" => "all",
             "hot" => "hot",
             "uncertain" => "uncertain",
             "new" => "new",
             "dead" or "killed" => "dead",
-            _ => "all",
+            "seen" or "verified" => "seen",
+            _ => "top",
         };
 
         var (text, keyboard) = await BuildIdeasPageAsync(filter, 1, cancellationToken);
@@ -652,6 +685,26 @@ internal sealed class TelegramCommandService(
             }
 
             var parts = (callback.Data ?? string.Empty).Split('|');
+            if (parts.Length >= 2 && parts[0] is "verify" or "rr" or "promoteb" or "killb"
+                && long.TryParse(parts[1], out var actIdeaId))
+            {
+                var answer = parts[0] switch
+                {
+                    "verify" => await VerifyIdeaAsync(parts[1], cancellationToken),
+                    "rr" => await StartResearchAsync(parts[1], cancellationToken) is { Length: > 0 } usage
+                        ? usage
+                        : $"🔎 re-research queued for #{actIdeaId}",
+                    "promoteb" => await SetIdeaStatusAsync(parts[1], "hot", cancellationToken),
+                    _ => await SetIdeaStatusAsync(parts[1], "dismissed", cancellationToken),
+                };
+                await _bot!.AnswerCallbackQuery(
+                    callback.Id,
+                    System.Text.RegularExpressions.Regex.Replace(answer, "<[^>]+>", string.Empty)
+                        is { Length: > 190 } longText ? longText[..190] : System.Text.RegularExpressions.Regex.Replace(answer, "<[^>]+>", string.Empty),
+                    cancellationToken: cancellationToken);
+                return;
+            }
+
             if (parts.Length >= 3 && parts[0] == "job" && parts[1] == "retry"
                 && long.TryParse(parts[2], out var retryJobId))
             {
@@ -674,7 +727,7 @@ internal sealed class TelegramCommandService(
                 await _bot!.AnswerCallbackQuery(
                     callback.Id, $"Caps +$5 for today (total bump ${total:F0})",
                     showAlert: true, cancellationToken: cancellationToken);
-                if (long.TryParse(parts[2], out var bumpJobId))
+                if (long.TryParse(parts[2], out var bumpJobId) && bumpJobId > 0)
                 {
                     using var retryScope = scopeFactory.CreateScope();
                     await retryScope.ServiceProvider.GetRequiredService<JobService>()
@@ -747,15 +800,19 @@ internal sealed class TelegramCommandService(
 
         var filtered = filter switch
         {
-            "top" => scored.OrderByDescending(x => x.Score.Total).ThenByDescending(x => x.Idea.Id).ToList(),
-            "hot" => scored.Where(x => x.Idea.Status == "hot")
+            // Default: live, unreviewed work - best first. Verified and dead are noise here.
+            "top" => scored.Where(x => !x.Idea.Verified && x.Idea.Status != "dismissed")
+                .OrderByDescending(x => x.Score.Total).ThenByDescending(x => x.Idea.Id).ToList(),
+            "hot" => scored.Where(x => x.Idea.Status == "hot" && !x.Idea.Verified)
                 .OrderByDescending(x => x.Score.Total).ToList(),
-            "uncertain" => scored.Where(x => x.Idea.Status is "uncertain" or "validated")
+            "uncertain" => scored.Where(x => x.Idea.Status is "uncertain" or "validated" && !x.Idea.Verified)
                 .OrderByDescending(x => x.Score.Total).ToList(),
-            "new" => scored.Where(x => x.Idea.Status == "candidate")
+            "new" => scored.Where(x => x.Idea.Status == "candidate" && !x.Idea.Verified)
                 .OrderByDescending(x => x.Score.Total).ToList(),
             "dead" => scored.Where(x => x.Idea.Status == "dismissed")
                 .OrderByDescending(x => x.Idea.Id).ToList(),
+            "seen" => scored.Where(x => x.Idea.Verified)
+                .OrderByDescending(x => x.Score.Total).ToList(),
             _ => scored.OrderByDescending(x => x.Idea.Id).ToList(),
         };
 
@@ -820,8 +877,8 @@ internal sealed class TelegramCommandService(
 
         var keyboard = new InlineKeyboardMarkup(
         [
-            filterRow[..2],
-            filterRow[2..],
+            filterRow[..4],
+            filterRow[4..],
             [.. navRow],
         ]);
 
@@ -830,7 +887,8 @@ internal sealed class TelegramCommandService(
 
     private static string FilterLabel(string filter) => filter switch
     {
-        "top" => "best first",
+        "top" => "top unreviewed",
+        "seen" => "✅ verified by you",
         "hot" => "🔥 hot",
         "uncertain" => "🤔 uncertain",
         "new" => "🌱 new",
@@ -841,6 +899,7 @@ internal sealed class TelegramCommandService(
     private static string FilterButton(string filter) => filter switch
     {
         "top" => "Top",
+        "seen" => "✅",
         "hot" => "🔥",
         "uncertain" => "🤔",
         "new" => "🌱",
@@ -870,6 +929,13 @@ internal sealed class TelegramCommandService(
         if (active.Count == 0)
         {
             builder.Append("😴 empty — nothing running or waiting\n");
+        }
+
+        var runningJob = active.FirstOrDefault(j => j.Status == "running");
+        if (runningJob is { ProgressMessageId: not null })
+        {
+            builder.Append("<i>▶️ this message replies to the LIVE log of job #")
+                .Append(runningJob.Id).Append(" — tap the quote above to jump</i>\n");
         }
 
         var position = 0;
@@ -907,6 +973,9 @@ internal sealed class TelegramCommandService(
             chatId: _adminChatId,
             text: builder.ToString(),
             parseMode: ParseMode.Html,
+            replyParameters: runningJob?.ProgressMessageId is { } liveLogId
+                ? new Telegram.Bot.Types.ReplyParameters { MessageId = liveLogId }
+                : null,
             replyMarkup: retryRow.Count > 0
                 ? new Telegram.Bot.Types.ReplyMarkups.InlineKeyboardMarkup(retryRow)
                 : null,
@@ -943,6 +1012,35 @@ internal sealed class TelegramCommandService(
         }
 
         return string.Empty;
+    }
+
+    private async Task<string> VerifyIdeaAsync(string? argument, CancellationToken cancellationToken)
+    {
+        if (!long.TryParse(argument, out var ideaId))
+        {
+            return "Usage: /verify 5 — marks the idea as personally reviewed (hides from default list)";
+        }
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
+        var idea = await db.Ideas.FindAsync([ideaId], cancellationToken);
+        if (idea is null)
+        {
+            return $"No idea #{ideaId}.";
+        }
+
+        idea.Verified = true;
+        await db.SaveChangesAsync(cancellationToken);
+        return $"✅ #{ideaId} marked verified — hidden from the default list (see ✅ tab).";
+    }
+
+    private async Task<string> BumpBudgetAsync(CancellationToken cancellationToken)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var total = await scope.ServiceProvider
+            .GetRequiredService<IdeaEngine.Infrastructure.Ai.BudgetGuard>()
+            .BumpTodayAsync(5m, cancellationToken);
+        return $"💸 Daily caps bumped <b>+$5</b> for today (total bump ${total:F0}). Monthly ceiling unchanged.";
     }
 
     private async Task<string> SetIdeaStatusAsync(
@@ -1287,9 +1385,10 @@ internal sealed class TelegramCommandService(
         /analyze — AI triage of queued items
         /ideate 3 — AI builder-vs-skeptic sessions from your signals
         /drop your pitch here — YOUR idea: shaped → skeptic → web research
-        /research 5 — web-validate idea number 5
+        /research 20 21 24 — web-validate one or several ideas
         /kill 5 · /promote 5 — override any verdict with YOUR decision
-        /queue — jobs running/waiting/failed (retry buttons)
+        /queue — jobs overview; replies to the live log of the running job
+        /verify 5 — mark reviewed (default /ideas hides verified) · /bump — +$5 today
         /advise — AI reviews the pipeline itself
 
         <b>View</b>
@@ -1299,7 +1398,8 @@ internal sealed class TelegramCommandService(
         /signals · /top · /status · /costs · /config
 
         <b>Scores</b>
-        ⭐ = graded by web research (evidence) · ≈ = skeptic estimate (no research yet)
+        ⭐ N% = opportunity strength (100% ≈ unicorn) · evidence N% = research solidity
+        ⭐ = graded by web research · ≈ = skeptic estimate (no research yet)
         Score = ingredients (demand/pay/build/gap). Status = the decision — one fatal
         flaw kills an idea regardless of a pretty score.
 

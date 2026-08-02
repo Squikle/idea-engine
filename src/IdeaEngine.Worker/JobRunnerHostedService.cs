@@ -123,6 +123,7 @@ internal sealed class JobRunnerHostedService(
                 : $"📦 Drop (job #{job.Id}) · shaping your pitch…",
             job.OriginMessageId,
             cancellationToken);
+        await SaveProgressIdAsync(job.Id, progress.MessageId, cancellationToken);
 
         var ideaId = payload.IdeaId;
 
@@ -174,8 +175,9 @@ internal sealed class JobRunnerHostedService(
         }
 
         await progress.CompleteAsync(
-            $"✅ done: {result.Verdict?.ToUpperInvariant()} · report below", CancellationToken.None);
-        await notifier.SendAsync(result.Html, cancellationToken);
+            $"✅ done: {Core.Common.Ui.Verdict(result.Verdict)} · ⭐{result.Score * 100:F0}% · evidence {result.Confidence * 100:F0}%",
+            CancellationToken.None);
+        await SendReportWithButtonsAsync(result, cancellationToken);
     }
 
     private async Task ExecuteResearchAsync(JobEntity job, CancellationToken cancellationToken)
@@ -185,6 +187,7 @@ internal sealed class JobRunnerHostedService(
 
         var progress = await progressNotifier.StartAsync(
             $"🔎 Research #{payload.IdeaId} (job #{job.Id}) · preparing…", job.OriginMessageId, cancellationToken);
+        await SaveProgressIdAsync(job.Id, progress.MessageId, cancellationToken);
 
         var result = await researchCoordinator.RunAsync(payload.IdeaId, progress, wait: true, cancellationToken);
         if (result is null)
@@ -200,8 +203,63 @@ internal sealed class JobRunnerHostedService(
         }
 
         await progress.CompleteAsync(
-            $"✅ done · {result.Verdict?.ToUpperInvariant()} · report below", CancellationToken.None);
-        await notifier.SendAsync(result.Html, cancellationToken);
+            $"✅ done · {Core.Common.Ui.Verdict(result.Verdict)} · ⭐{result.Score * 100:F0}% · evidence {result.Confidence * 100:F0}%",
+            CancellationToken.None);
+        await SendReportWithButtonsAsync(result, cancellationToken);
+    }
+
+    private async Task SaveProgressIdAsync(long jobId, int? messageId, CancellationToken cancellationToken)
+    {
+        if (messageId is null)
+        {
+            return;
+        }
+
+        using var scope = scopeFactory.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<JobService>()
+            .SetProgressMessageAsync(jobId, messageId, cancellationToken);
+    }
+
+    /// <summary>Report message with one-tap decision buttons; falls back to plain notifier.</summary>
+    private async Task SendReportWithButtonsAsync(
+        IdeaEngine.Infrastructure.Research.ResearchRunResult result, CancellationToken cancellationToken)
+    {
+        var bot = serviceProvider.GetService<Telegram.Bot.ITelegramBotClient>();
+        var telegram = serviceProvider.GetService<IdeaEngine.Infrastructure.Notifications.TelegramOptions>();
+        if (bot is null || telegram is not { IsConfigured: true } || result.IdeaId == 0)
+        {
+            await notifier.SendAsync(result.Html, cancellationToken);
+            return;
+        }
+
+        var id = result.IdeaId;
+        var keyboard = new Telegram.Bot.Types.ReplyMarkups.InlineKeyboardMarkup(
+        [
+            [
+                Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton.WithCallbackData("✅ Verified", $"verify|{id}"),
+                Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton.WithCallbackData("🔁 Re-research", $"rr|{id}"),
+            ],
+            [
+                Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton.WithCallbackData("🔥 Promote", $"promoteb|{id}"),
+                Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton.WithCallbackData("☠️ Kill", $"killb|{id}"),
+            ],
+        ]);
+
+        try
+        {
+            await bot.SendMessage(
+                chatId: telegram.AdminChatId!.Value,
+                text: result.Html,
+                parseMode: Telegram.Bot.Types.Enums.ParseMode.Html,
+                replyMarkup: keyboard,
+                linkPreviewOptions: Telegram.Bot.Types.LinkPreviewOptions.Disabled,
+                cancellationToken: cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Report-with-buttons failed; plain fallback");
+            await notifier.SendAsync(result.Html, cancellationToken);
+        }
     }
 
     /// <summary>Marks the job failed and posts an actionable card: retry, and +$5 when it was a budget cap.</summary>

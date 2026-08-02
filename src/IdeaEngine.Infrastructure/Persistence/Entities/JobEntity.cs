@@ -26,6 +26,9 @@ public sealed class JobEntity
     /// owner can tap through from ack to the live log.</summary>
     public int? OriginMessageId { get; set; }
 
+    /// <summary>Message id of the live progress log once the runner starts it (queue links here).</summary>
+    public int? ProgressMessageId { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
 
     public DateTimeOffset UpdatedAt { get; set; }

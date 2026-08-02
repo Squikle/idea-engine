@@ -15,6 +15,9 @@ public interface IProgressNotifier
 /// <summary>Handle to the operation's progress message.</summary>
 public interface IProgressHandle
 {
+    /// <summary>Telegram message id of the log, when one exists.</summary>
+    int? MessageId { get; }
+
     /// <summary>Edit the message in place (throttled; identical text skipped).</summary>
     Task UpdateAsync(string text, CancellationToken cancellationToken);
 
