@@ -103,6 +103,62 @@ public sealed class LlmJsonTests
         Assert.Equal(2, result!.Value);
     }
 
+    private sealed record Report(string? Verdict, double Confidence);
+
+    [Fact]
+    public void TryParse_MissingObjectCloserBeforeArrayClose_Job54Shape()
+    {
+        // Exact defect from job #54: an object in "answers" never got its closing brace.
+        var result = LlmJson.TryParse<Report>(
+            """{"verdict":"maybe","confidence":0.55,"answers":[{"q":"a","urls":["https://x.com"]},{"q":"b","urls":["https://y.com"]],"notes":"n"}""");
+
+        Assert.NotNull(result);
+        Assert.Equal("maybe", result!.Verdict);
+        Assert.Equal(0.55, result.Confidence, 3);
+    }
+
+    [Fact]
+    public void TryParse_MissingArrayCloserBeforeObjectClose()
+    {
+        var result = LlmJson.TryParse<Report>(
+            """{"verdict":"go","confidence":0.7,"risks":["r1","r2"}""");
+
+        Assert.NotNull(result);
+        Assert.Equal("go", result!.Verdict);
+    }
+
+    [Fact]
+    public void TryParse_TruncatedMidString_ClosedAtEof()
+    {
+        var result = LlmJson.TryParse<Report>(
+            """{"verdict":"maybe","confidence":0.5,"notes":"cut off mid-sent""");
+
+        Assert.NotNull(result);
+        Assert.Equal("maybe", result!.Verdict);
+    }
+
+    [Fact]
+    public void TryParse_UnescapedInnerQuotes_Escaped()
+    {
+        var result = LlmJson.TryParse<Report>(
+            """{"verdict":"no-go","confidence":0.8,"notes":"users said "too pricey" often"}""");
+
+        Assert.NotNull(result);
+        Assert.Equal("no-go", result!.Verdict);
+    }
+
+    [Fact]
+    public void TryParse_ValidJson_UntouchedByRepairLayers()
+    {
+        // Repair layers must be no-ops on healthy output: full round-trip equality.
+        var result = LlmJson.TryParse<Sample>(
+            """{"name":"has ] and } in string","value":11}""");
+
+        Assert.NotNull(result);
+        Assert.Equal("has ] and } in string", result!.Name);
+        Assert.Equal(11, result.Value);
+    }
+
     [Fact]
     public void TryParse_EscapedQuotesInsideStrings_StillBalanced()
     {

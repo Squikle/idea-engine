@@ -390,6 +390,40 @@ public sealed class ResearchService(
             }
         }
 
+        // Deterministic repairs failed twice: one cheap re-emit before giving up.
+        // A $0.30 research run must not die for a $0.003 syntax error.
+        if (last?.Content is { Length: > 300 } broken)
+        {
+            var repair = await chat.CompleteAsync(
+                options.RepairModel,
+                "You fix malformed JSON. Output ONLY the corrected JSON object - identical "
+                + "content, valid syntax. Never add, remove, translate or summarize anything.",
+                broken, (int)(broken.Length / 2.5), "low", cancellationToken);
+            if (repair is { IsError: false })
+            {
+                var repairCost = (repair.TokensIn * options.RepairInputPricePerMTok
+                    + repair.TokensOut * options.RepairOutputPricePerMTok) / 1_000_000m;
+                db.AiLedger.Add(new AiLedgerEntry
+                {
+                    Day = DateOnly.FromDateTime(timeProvider.GetUtcNow().UtcDateTime),
+                    Stage = StageName,
+                    Model = options.RepairModel,
+                    TokensIn = repair.TokensIn,
+                    TokensOut = repair.TokensOut,
+                    CostUsd = repairCost,
+                    CreatedAt = timeProvider.GetUtcNow(),
+                });
+                addCost(repairCost);
+
+                var repaired = LlmJson.TryParse<ResearchReportDto>(repair.Content);
+                if (repaired is not null)
+                {
+                    logger.LogInformation("Synthesis JSON repaired by {Model}", options.RepairModel);
+                    return (repaired, null, last?.Content);
+                }
+            }
+        }
+
         return (null, LlmDiag.Describe(last), last?.Content);
     }
 

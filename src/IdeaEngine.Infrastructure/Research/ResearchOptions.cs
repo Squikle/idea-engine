@@ -12,6 +12,13 @@ public sealed class ResearchOptions
 
     public decimal OutputPricePerMTok { get; set; } = 10.00m;
 
+    /// <summary>Cheap model that re-emits broken synthesis JSON verbatim-but-valid.</summary>
+    public string RepairModel { get; set; } = "openai/gpt-5-nano";
+
+    public decimal RepairInputPricePerMTok { get; set; } = 0.05m;
+
+    public decimal RepairOutputPricePerMTok { get; set; } = 0.40m;
+
     /// <summary>Stage daily cap (stage name: "research"). ~$0.05-0.10 per report.</summary>
     public decimal DailyUsdCap { get; set; } = 2.00m;
 

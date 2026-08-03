@@ -5,6 +5,15 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.28.1 — 2026-08-02
+
+### Fixed
+- **Reliability: malformed model JSON no longer kills research runs.** Two new
+  deterministic repair layers (missing closers — the exact job #54 defect, verified
+  against its stored raw reply — and unescaped inner quotes), plus a last-resort
+  cheap-model re-emit (~$0.003) before any run is allowed to fail. A $0.30 research
+  run must not die for a syntax slip. 11 parser tests total.
+
 ## 0.28.0 — 2026-08-02
 
 ### Added

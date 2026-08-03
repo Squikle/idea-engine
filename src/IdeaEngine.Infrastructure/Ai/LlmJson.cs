@@ -68,19 +68,43 @@ public static class LlmJson
         yield return trimmed;
 
         var balanced = ExtractBalancedObject(trimmed);
-        if (balanced is not null && !ReferenceEquals(balanced, trimmed))
+        var basis = balanced ?? BeheadToFirstBrace(trimmed);
+        if (basis is null)
         {
-            yield return balanced;
+            yield break;
         }
 
-        if (balanced is not null)
+        if (!ReferenceEquals(basis, trimmed))
         {
-            var sanitized = EscapeControlCharsInStrings(balanced);
-            if (sanitized != balanced)
-            {
-                yield return sanitized;
-            }
+            yield return basis;
         }
+
+        var sanitized = EscapeControlCharsInStrings(basis);
+        if (sanitized != basis)
+        {
+            yield return sanitized;
+        }
+
+        var quoteFixed = EscapeInnerQuotes(sanitized);
+        if (quoteFixed != sanitized)
+        {
+            yield return quoteFixed;
+        }
+
+        // Last resort: models drop closers ("}" before "]", or truncate mid-scope).
+        // Inserting the expected closers is a no-op on valid JSON (job #54 shape).
+        var bracketFixed = RepairBrackets(quoteFixed);
+        if (bracketFixed != quoteFixed)
+        {
+            yield return bracketFixed;
+        }
+    }
+
+    /// <summary>When no balanced object exists (missing closers), start at the first brace.</summary>
+    private static string? BeheadToFirstBrace(string text)
+    {
+        var start = text.IndexOf('{', StringComparison.Ordinal);
+        return start < 0 ? null : text[start..];
     }
 
     /// <summary>First balanced {...} block, string-and-escape aware. Null when unbalanced.</summary>
@@ -176,6 +200,141 @@ public static class LlmJson
             }
 
             builder.Append(c);
+        }
+
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// Escapes quotes that are CONTENT, not delimiters: a closing quote must be followed
+    /// by a structural character (, : ] }) — anything else means the model forgot \".
+    /// </summary>
+    private static string EscapeInnerQuotes(string json)
+    {
+        var builder = new System.Text.StringBuilder(json.Length + 8);
+        var inString = false;
+        var escaped = false;
+        for (var i = 0; i < json.Length; i++)
+        {
+            var c = json[i];
+            if (escaped)
+            {
+                builder.Append(c);
+                escaped = false;
+                continue;
+            }
+
+            if (c == '\\' && inString)
+            {
+                builder.Append(c);
+                escaped = true;
+                continue;
+            }
+
+            if (c == '"' && inString)
+            {
+                var j = i + 1;
+                while (j < json.Length && json[j] is ' ' or '\n' or '\r' or '\t')
+                {
+                    j++;
+                }
+
+                if (j < json.Length && json[j] is not (',' or ':' or ']' or '}'))
+                {
+                    builder.Append("\\\"");
+                    continue; // content quote, string stays open
+                }
+
+                inString = false;
+                builder.Append(c);
+                continue;
+            }
+
+            if (c == '"')
+            {
+                inString = true;
+            }
+
+            builder.Append(c);
+        }
+
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// Inserts missing closers: a mismatched closer pops the stack with the EXPECTED
+    /// closers first; EOF closes an open string and every open scope. No-op when valid.
+    /// </summary>
+    private static string RepairBrackets(string json)
+    {
+        var builder = new System.Text.StringBuilder(json.Length + 8);
+        var stack = new Stack<char>();
+        var inString = false;
+        var escaped = false;
+        foreach (var c in json)
+        {
+            if (escaped)
+            {
+                builder.Append(c);
+                escaped = false;
+                continue;
+            }
+
+            if (c == '\\' && inString)
+            {
+                builder.Append(c);
+                escaped = true;
+                continue;
+            }
+
+            if (c == '"')
+            {
+                inString = !inString;
+                builder.Append(c);
+                continue;
+            }
+
+            if (inString)
+            {
+                builder.Append(c);
+                continue;
+            }
+
+            switch (c)
+            {
+                case '{' or '[':
+                    stack.Push(c);
+                    builder.Append(c);
+                    break;
+                case '}' or ']':
+                    var expectedOpener = c == '}' ? '{' : '[';
+                    while (stack.Count > 0 && stack.Peek() != expectedOpener)
+                    {
+                        builder.Append(stack.Pop() == '{' ? '}' : ']');
+                    }
+
+                    if (stack.Count == 0)
+                    {
+                        break; // stray closer: drop it
+                    }
+
+                    stack.Pop();
+                    builder.Append(c);
+                    break;
+                default:
+                    builder.Append(c);
+                    break;
+            }
+        }
+
+        if (inString)
+        {
+            builder.Append('"');
+        }
+
+        while (stack.Count > 0)
+        {
+            builder.Append(stack.Pop() == '{' ? '}' : ']');
         }
 
         return builder.ToString();
