@@ -196,7 +196,11 @@ public sealed class IdeationService(
             options.SkepticInputPricePerMTok, options.SkepticOutputPricePerMTok);
         review = LlmJson.TryParse<SkepticReview>(skepticCompletion?.Content);
 
-        var advanced = string.Equals(review?.Verdict, "advance", StringComparison.OrdinalIgnoreCase);
+        // A missing verdict is a DIAGNOSTIC, not a judgment: killing on parse failure
+        // would violate the honesty law (#59 died this way once). Benefit of the doubt.
+        var skepticUnavailable = review is null;
+        var advanced = skepticUnavailable
+            || string.Equals(review!.Verdict, "advance", StringComparison.OrdinalIgnoreCase);
         var entity = new IdeaEntity
         {
             Title = Truncate(idea.Title, 290)!,
@@ -227,7 +231,9 @@ public sealed class IdeationService(
         var builder = new StringBuilder();
         builder.Append(Ui.Drop).Append(" <b>#").Append(entity.Id).Append(" · ")
             .Append(WebUtility.HtmlEncode(entity.Title)).Append("</b> 🧑\n")
-            .Append("Skeptic: ").Append(advanced ? "🟢 advance" : "☠️ kill");
+            .Append("Skeptic: ").Append(skepticUnavailable
+                ? $"⚠️ no verdict ({LlmDiag.Describe(skepticCompletion)}) — advancing on benefit of the doubt"
+                : advanced ? "🟢 advance" : "☠️ kill");
         builder.Append('\n');
         if (review?.KillReasons is { Count: > 0 } reasons && !advanced)
         {
@@ -400,7 +406,9 @@ public sealed class IdeationService(
         }
 
         // No skeptic verdict -> no free pass. Unvetted ideas are dismissed with a reason.
-        var advanced = string.Equals(review?.Verdict, "advance", StringComparison.OrdinalIgnoreCase);
+        // Parse failure = diagnostic, not a kill (same rule as operator drops).
+        var advanced = review is null
+            || string.Equals(review.Verdict, "advance", StringComparison.OrdinalIgnoreCase);
         var killReason = review is null
             ? "skeptic unavailable - never advance unvetted"
             : review.KillReasons is { Count: > 0 } reasons

@@ -5,6 +5,14 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.27.1 — 2026-08-02
+
+### Fixed
+- **Skeptic parse failure no longer kills ideas** (both drop and AI-session paths):
+  a missing verdict is a diagnostic, not a judgment — the idea advances as candidate
+  with an explicit "no verdict (reason) — benefit of the doubt" line. Idea #59 was
+  killed this way; revived to candidate by hand.
+
 ## 0.27.0 — 2026-08-02
 
 ### Added
