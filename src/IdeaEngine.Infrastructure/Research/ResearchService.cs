@@ -120,6 +120,15 @@ public sealed class ResearchService(
                 + string.Join('\n', notes.TakeLast(5).Select(n => "- " + n.Text)) + "\n";
         }
 
+        // The deepening loop: research → appeal → note → research. Each pass must
+        // digest the court's critique, or re-running research would change nothing.
+        if (idea.AppealJson is { Length: > 0 })
+        {
+            ideaContext += "\nCOURT OF APPEAL review of the previous verdict (a stronger model "
+                + "audited the judgment; explicitly address its 'missed' points this round):\n"
+                + idea.AppealJson + "\n";
+        }
+
         decimal cost = 0;
         var searchesUsed = 0;
         var pagesRead = 0;
@@ -156,6 +165,8 @@ public sealed class ResearchService(
             return Stopped("web search returned no results (Brave quota or connectivity?)");
         }
 
+        var artifacts = new List<ResearchArtifactEntity>();
+
         // Debate: advocate builds the case FOR before the judge synthesizes.
         string? advocateJson = null;
         if (progress is not null)
@@ -178,11 +189,13 @@ public sealed class ResearchService(
         {
             ideaContext += "\nADVOCATE'S CASE (weigh honestly against the skeptic and evidence):\n"
                 + advocateJson + "\n";
+            AddArtifact(artifacts, idea.Id, "advocate", 0, new { raw = advocateJson });
         }
 
         // Synthesis rounds until closure or MaxRounds.
         ResearchReportDto? report = null;
         string? lastSynthesisDiag = null;
+        string? lastSynthesisRaw = null;
         var rounds = 0;
         while (rounds < Math.Max(1, options.MaxRounds))
         {
@@ -195,11 +208,13 @@ public sealed class ResearchService(
             }
 
             string? synthesisDiag;
-            (report, synthesisDiag) = await SynthesizeAsync(
+            string? synthesisRaw;
+            (report, synthesisDiag, synthesisRaw) = await SynthesizeAsync(
                 ideaContext, blocks, pageExcerpts, options, c => cost += c, cancellationToken);
             if (report is null)
             {
                 lastSynthesisDiag = synthesisDiag;
+                lastSynthesisRaw = synthesisRaw;
                 break;
             }
 
@@ -250,14 +265,23 @@ public sealed class ResearchService(
             }
         }
 
+        PersistScaffolding(artifacts, idea.Id, blocks, pageExcerpts);
         if (report is null)
         {
+            // Failed runs keep their scaffolding too (ReportId null): the searches are
+            // paid for and the raw reply is the debugging evidence.
+            if (lastSynthesisRaw is { Length: > 0 })
+            {
+                AddArtifact(artifacts, idea.Id, "synthesis_raw", 0, new { raw = lastSynthesisRaw });
+            }
+
+            db.ResearchArtifacts.AddRange(artifacts);
             await db.SaveChangesAsync(cancellationToken);
             return Stopped($"synthesis failed — {lastSynthesisDiag ?? "unknown model failure"}");
         }
 
         var verdict = NormalizeVerdict(report.Verdict);
-        db.ResearchReports.Add(new ResearchReportEntity
+        var reportEntity = new ResearchReportEntity
         {
             IdeaId = idea.Id,
             Verdict = verdict,
@@ -271,7 +295,8 @@ public sealed class ResearchService(
             Model = options.Model,
             CostUsd = cost,
             CreatedAt = timeProvider.GetUtcNow(),
-        });
+        };
+        db.ResearchReports.Add(reportEntity);
 
         idea.Status = verdict switch
         {
@@ -280,6 +305,15 @@ public sealed class ResearchService(
             _ => "uncertain",
         };
 
+        await db.SaveChangesAsync(cancellationToken);
+
+        // Scaffolding gets the report id only after the report row exists.
+        foreach (var artifact in artifacts)
+        {
+            artifact.ReportId = reportEntity.Id;
+        }
+
+        db.ResearchArtifacts.AddRange(artifacts);
         await db.SaveChangesAsync(cancellationToken);
         logger.LogInformation(
             "Research #{IdeaId}: {Verdict} (conf {Confidence:F2}), {Rounds} rounds, {Pages} pages, ${Cost:F4}",
@@ -326,7 +360,7 @@ public sealed class ResearchService(
         return used;
     }
 
-    private async Task<(ResearchReportDto? Report, string? Diag)> SynthesizeAsync(
+    private async Task<(ResearchReportDto? Report, string? Diag, string? Raw)> SynthesizeAsync(
         string ideaContext,
         List<(string Query, IReadOnlyList<SearchHit> Hits)> blocks,
         List<(string Url, string Excerpt)> pageExcerpts,
@@ -347,7 +381,7 @@ public sealed class ResearchService(
             var parsed = LlmJson.TryParse<ResearchReportDto>(last?.Content);
             if (parsed is not null)
             {
-                return (parsed, null);
+                return (parsed, null, last?.Content);
             }
 
             if (LlmDiag.IsTruncation(last))
@@ -356,7 +390,44 @@ public sealed class ResearchService(
             }
         }
 
-        return (null, LlmDiag.Describe(last));
+        return (null, LlmDiag.Describe(last), last?.Content);
+    }
+
+    /// <summary>SERPs and page excerpts → artifacts (retro mining; costs nothing vs AI spend).</summary>
+    private void PersistScaffolding(
+        List<ResearchArtifactEntity> artifacts,
+        long ideaId,
+        List<(string Query, IReadOnlyList<SearchHit> Hits)> blocks,
+        List<(string Url, string Excerpt)> pageExcerpts)
+    {
+        var seq = 0;
+        foreach (var (query, hits) in blocks)
+        {
+            AddArtifact(artifacts, ideaId, "serp", seq++, new
+            {
+                query,
+                hits = hits.Select(h => new { title = h.Title, url = h.Url, snippet = h.Description }),
+            });
+        }
+
+        seq = 0;
+        foreach (var (url, excerpt) in pageExcerpts)
+        {
+            AddArtifact(artifacts, ideaId, "page", seq++, new { url, excerpt });
+        }
+    }
+
+    private void AddArtifact(
+        List<ResearchArtifactEntity> artifacts, long ideaId, string kind, int seq, object payload)
+    {
+        artifacts.Add(new ResearchArtifactEntity
+        {
+            IdeaId = ideaId,
+            Kind = kind,
+            Seq = seq,
+            Json = JsonSerializer.Serialize(payload, LlmJson.Options),
+            CreatedAt = timeProvider.GetUtcNow(),
+        });
     }
 
     private static List<string> UnansweredQuestions(

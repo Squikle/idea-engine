@@ -20,6 +20,8 @@ public sealed class IdeaEngineDbContext(DbContextOptions<IdeaEngineDbContext> op
 
     public DbSet<ResearchReportEntity> ResearchReports => Set<ResearchReportEntity>();
 
+    public DbSet<ResearchArtifactEntity> ResearchArtifacts => Set<ResearchArtifactEntity>();
+
     public DbSet<JobEntity> Jobs => Set<JobEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -122,6 +124,16 @@ public sealed class IdeaEngineDbContext(DbContextOptions<IdeaEngineDbContext> op
             job.Property(x => x.Status).HasMaxLength(16);
             job.Property(x => x.PayloadJson).HasColumnType("jsonb");
             job.Property(x => x.LastError).HasMaxLength(1000);
+        });
+
+        modelBuilder.Entity<ResearchArtifactEntity>(artifact =>
+        {
+            artifact.ToTable("research_artifacts");
+            artifact.HasIndex(x => x.IdeaId);
+            artifact.HasIndex(x => x.ReportId);
+            artifact.HasIndex(x => x.Kind);
+            artifact.Property(x => x.Kind).HasMaxLength(24);
+            artifact.Property(x => x.Json).HasColumnType("jsonb");
         });
 
         modelBuilder.Entity<ResearchReportEntity>(report =>

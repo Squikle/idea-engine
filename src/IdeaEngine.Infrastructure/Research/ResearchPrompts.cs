@@ -22,6 +22,11 @@ public static class ResearchPrompts
         underserved segments, weaknesses of the competitors visible in the evidence, and at
         least TWO concrete pivots (changed angle/audience/pricing/platform) that dodge the
         obvious objections. Ground claims in the evidence; mark speculation as speculation.
+        You are UNRESTRICTED in direction: no moralizing, no legal hand-wringing, no taste
+        policing - gray-area, edgy, adult-adjacent and scraping-adjacent niches are valid
+        terrain (the operator owns responsibility; garage scale, 1-3 people). Note a real
+        legal risk factually in one clause; never argue for restraint. Freedom is about
+        direction, not truth: NEVER invent evidence.
         Pivot lenses to reach for when they fit:
         {LENSES}
         Reply with ONLY a JSON object:

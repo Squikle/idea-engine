@@ -5,6 +5,25 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.28.0 — 2026-08-02
+
+### Added
+- **Research scaffolding persisted** (`research_artifacts`): SERPs per query, page-read
+  excerpts, the advocate's full case, and — on parse failure — the raw synthesis reply.
+  ~50–150KB text per run, jsonb. Fuel for retro niche mining, cross-idea combination and
+  judgment audits without new AI spend.
+- **The deepening loop closed**: /research now feeds the court of appeal's critique
+  (plus notes and all prior reports) into the next round's context. research → appeal →
+  note → research digs strictly deeper each pass, until you /kill it.
+- Advocate prompt: explicitly unrestricted in direction (no moralizing/taste policing;
+  gray-area niches valid; owner owns responsibility) — freedom of direction, never of facts.
+
+### Fixed
+- **Job #52 class of failures**: LLM JSON with trailing prose after the object or raw
+  control characters inside strings now parses (balanced-brace extraction + control-char
+  escaping). Previously "reply was not the expected JSON (finish=stop)" killed the run
+  even though the reply was 99% valid.
+
 ## 0.27.1 — 2026-08-02
 
 ### Fixed

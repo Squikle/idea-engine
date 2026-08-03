@@ -18,7 +18,7 @@
 | 5b | ideation (skeptic) | AI | `deepseek/deepseek-v4-pro` | adversarial review, verdict advance/kill + kill reasons + category scores | `ideas.SkepticJson`, `ideas.ScoresJson`, status candidate/dismissed |
 | 5c | relate | AI | `openai/gpt-5-nano` | links new idea to duplicates/variants/related among existing ideas | `ideas.RelatedJson` (both sides) |
 | 6 | jobs | **code** | — | durable queue for drop/research/dig: checkpoints, watchdog timeouts, budget-hold, cancel, retry | `jobs` (kind, payload JSON, state, checkpoints, progress msg id) |
-| 7 | research | AI + code | `anthropic/claude-sonnet-5` | plan → Brave searches (code) → page reads (code, 15s box) → advocate-vs-skeptic debate → judge; multi-round until closure; builds ON TOP of previous reports | `research_reports` (full ReportJson: verdict, confidence, competitors, answers+evidence URLs, risks, steps, rounds/searches/pages counters, EngineVersion), `ai_ledger` |
+| 7 | research | AI + code | `anthropic/claude-sonnet-5` | plan → Brave searches (code) → page reads (code, 15s box) → advocate case → judge; multi-round until closure; builds ON TOP of previous reports + latest appeal + notes | `research_reports` (full ReportJson + EngineVersion), `research_artifacts` (SERPs, pages, advocate, raw synthesis), `ai_ledger` |
 | 8 | appeal | AI | `anthropic/claude-opus-4.6` | reviews verdict-vs-evidence; auto-fires on no-go with ⭐≥50% AND on operator-drop skeptic kills (pre-research); can overturn status | `ideas.AppealJson`, status change, `ai_ledger` |
 | 9 | dig | AI | `anthropic/claude-sonnet-5` | operator-directed topic excavation, spawns ideas | new `ideas` rows (origin=dig), `ai_ledger` |
 | 10 | reeval (/sweep) | code + AI | heuristics + `openai/gpt-5-nano` | re-examines killed ideas under newest reasoning milestones; nano screen → research queue | status flips, queued jobs, `ai_ledger` |
@@ -52,9 +52,14 @@
   pages counters. Verdict-flip analysis across engine versions is possible.
 - `jobs` — every drop/research/dig with timestamps and outcomes: queue latency,
   failure rates, watchdog kills.
-- **Not stored** (accepted gaps): per-search raw SERPs, per-round debate transcripts,
-  fetched page bodies. The judge's synthesis + evidence URLs persist; the scaffolding
-  doesn't. Revisit if verdict audits demand transcript replay.
+- `research_artifacts` (v0.28.0) — the scaffolding, kept: per-query SERPs
+  (title/url/snippet), page-read excerpts, the advocate's full case, and raw synthesis
+  output when parsing failed (ReportId null = failed run). ~50–150KB of text per run;
+  jsonb, SQL-minable. Enables retro niche mining ("which SERPs kept surfacing the same
+  underserved audience?"), combining strong sides of related ideas, and judgment audits
+  — without re-paying for AI.
+- **Still not stored**: full fetched page bodies (only the excerpt the judge saw) and
+  the judge's chain-of-thought (providers don't return it).
 
 ## Where to look next
 

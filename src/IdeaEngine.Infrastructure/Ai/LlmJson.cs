@@ -30,7 +30,11 @@ public static class LlmJson
         }
     }
 
-    /// <summary>Deserializes the first JSON object found in the content, or null.</summary>
+    /// <summary>
+    /// Deserializes the first JSON object found in the content, or null. Tolerates code
+    /// fences, leading/trailing prose (balanced-brace extraction) and raw control
+    /// characters inside string literals (a frequent LLM slip that is invalid JSON).
+    /// </summary>
     public static T? TryParse<T>(string? content)
         where T : class
     {
@@ -39,26 +43,141 @@ public static class LlmJson
             return null;
         }
 
-        var json = content.Trim();
-        if (!json.StartsWith('{'))
+        var trimmed = content.Trim();
+        foreach (var candidate in Candidates(trimmed))
         {
-            var start = json.IndexOf('{', StringComparison.Ordinal);
-            var end = json.LastIndexOf('}');
-            if (start < 0 || end <= start)
+            try
             {
-                return null;
+                var parsed = JsonSerializer.Deserialize<T>(candidate, Options);
+                if (parsed is not null)
+                {
+                    return parsed;
+                }
             }
-
-            json = json[start..(end + 1)];
+            catch (JsonException)
+            {
+                // try the next, more forgiving candidate
+            }
         }
 
-        try
+        return null;
+    }
+
+    private static IEnumerable<string> Candidates(string trimmed)
+    {
+        yield return trimmed;
+
+        var balanced = ExtractBalancedObject(trimmed);
+        if (balanced is not null && !ReferenceEquals(balanced, trimmed))
         {
-            return JsonSerializer.Deserialize<T>(json, Options);
+            yield return balanced;
         }
-        catch (JsonException)
+
+        if (balanced is not null)
+        {
+            var sanitized = EscapeControlCharsInStrings(balanced);
+            if (sanitized != balanced)
+            {
+                yield return sanitized;
+            }
+        }
+    }
+
+    /// <summary>First balanced {...} block, string-and-escape aware. Null when unbalanced.</summary>
+    private static string? ExtractBalancedObject(string text)
+    {
+        var start = text.IndexOf('{', StringComparison.Ordinal);
+        if (start < 0)
         {
             return null;
         }
+
+        var depth = 0;
+        var inString = false;
+        var escaped = false;
+        for (var i = start; i < text.Length; i++)
+        {
+            var c = text[i];
+            if (escaped)
+            {
+                escaped = false;
+                continue;
+            }
+
+            if (c == '\\' && inString)
+            {
+                escaped = true;
+                continue;
+            }
+
+            if (c == '"')
+            {
+                inString = !inString;
+                continue;
+            }
+
+            if (inString)
+            {
+                continue;
+            }
+
+            if (c == '{')
+            {
+                depth++;
+            }
+            else if (c == '}' && --depth == 0)
+            {
+                return text[start..(i + 1)];
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Escapes raw control characters INSIDE string literals (invalid JSON, common LLM slip).</summary>
+    private static string EscapeControlCharsInStrings(string json)
+    {
+        var builder = new System.Text.StringBuilder(json.Length + 16);
+        var inString = false;
+        var escaped = false;
+        foreach (var c in json)
+        {
+            if (escaped)
+            {
+                builder.Append(c);
+                escaped = false;
+                continue;
+            }
+
+            if (c == '\\' && inString)
+            {
+                builder.Append(c);
+                escaped = true;
+                continue;
+            }
+
+            if (c == '"')
+            {
+                inString = !inString;
+                builder.Append(c);
+                continue;
+            }
+
+            if (inString && c < ' ')
+            {
+                builder.Append(c switch
+                {
+                    '\n' => "\\n",
+                    '\r' => "\\r",
+                    '\t' => "\\t",
+                    _ => " ",
+                });
+                continue;
+            }
+
+            builder.Append(c);
+        }
+
+        return builder.ToString();
     }
 }
