@@ -93,10 +93,13 @@ public sealed class BudgetGuard(
         var globalToday = monthRows.Where(r => r.IsToday).Sum(r => r.Cost);
         var globalMonth = monthRows.Sum(r => r.Cost);
 
+        var callCeiling = options.MaxUsdPerCallByStage.TryGetValue(stage, out var stageCeiling)
+            ? stageCeiling
+            : options.MaxUsdPerCall;
         string? reason = null;
-        if (worstCallUsd > options.MaxUsdPerCall)
+        if (worstCallUsd > callCeiling)
         {
-            reason = $"single call estimate ${worstCallUsd:F3} exceeds MaxUsdPerCall ${options.MaxUsdPerCall:F2} (misconfiguration?)";
+            reason = $"single call estimate ${worstCallUsd:F3} exceeds the '{stage}' per-call ceiling ${callCeiling:F2}";
         }
         else if (stageToday >= stageDailyCap)
         {

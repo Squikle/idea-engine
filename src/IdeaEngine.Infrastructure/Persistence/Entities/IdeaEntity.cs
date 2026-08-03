@@ -30,6 +30,9 @@ public sealed class IdeaEntity
     /// <summary>ai | operator (dropped via /drop) | dig.</summary>
     public string Origin { get; set; } = "ai";
 
+    /// <summary>The operator's raw /drop text, verbatim (before AI shaping). Retro gold.</summary>
+    public string? OriginalPitch { get; set; }
+
     /// <summary>Owner has personally reviewed this idea (hides it from the default list).</summary>
     public bool Verified { get; set; }
 

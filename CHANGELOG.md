@@ -5,6 +5,31 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.27.0 — 2026-08-02
+
+### Added
+- **Pre-research appeals**: the court of appeal now reviews skeptic kills that never
+  reached research (previously it refused without a report). Overturn revives the idea
+  as `candidate` — evidence first, no straight-to-hot.
+- **Drops get an automatic day in court**: when the skeptic kills an operator drop,
+  appeal fires automatically; if overturned, research proceeds in the same job. No more
+  silent dead-ends after /drop.
+- **Raw pitch persisted**: your verbatim /drop text is stored on the idea
+  (`OriginalPitch`) and fed to appeals — the judge sees what YOU said, not only the
+  AI-shaped version.
+- **Per-stage call ceilings**: appeal's per-call ceiling raised to $0.45 (opus over a
+  long context is expensive by design); other stages keep the $0.15 misconfiguration trap.
+  Fixes "single call estimate $0.175 exceeds MaxUsdPerCall" blocking appeals.
+- `docs/PIPELINE.md`: stage map — code vs AI, model per step, what each stage stores.
+
+### Changed
+- **No more mid-argument "…"**: research verdict cards lost the 3900-char amputation and
+  per-line clips; kill reasons, risks, answers, next steps render in full. Long cards
+  split into reply-chained Telegram messages (continuation replies to its head).
+- Drop cards list ALL skeptic kill reasons (was: first reason, clipped to 120 chars).
+- Appeal cards render missed points and justification in full.
+- Reasoning milestone appended: pre-research kills auto-appealed on drops (affects /sweep).
+
 ## 0.26.1 — 2026-08-02
 
 ### Fixed

@@ -5,7 +5,7 @@
 > [RUNBOOK.md](RUNBOOK.md) (how to run things). Keep this file terse and current —
 > updating it is part of every phase's definition of done.
 
-## Where the project actually is (2026-08-02, v0.26.1)
+## Where the project actually is (2026-08-02, v0.27.0)
 
 The phased plan below became reality faster than the phases: the full loop ships.
 
@@ -73,6 +73,7 @@ across several cycles, check `raw_items where source=4` and consider longer paci
 ## For AI agents resuming work
 
 1. Read this file, then **docs/DEVELOPMENT.md (the change protocol - mandatory)**,
+   then [PIPELINE.md](PIPELINE.md) (stage map: code vs AI vs models vs storage),
    then `git log --oneline -20` and `CHANGELOG.md`.
 2. `docker compose up -d db && dotnet build && dotnet test` — must be green before starting.
 3. Work in small commits; update this file + relevant docs before finishing a phase.

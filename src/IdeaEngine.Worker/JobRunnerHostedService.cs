@@ -246,11 +246,43 @@ internal sealed class JobRunnerHostedService(
 
             if (!advancedDrop)
             {
-                await progress.CompleteAsync(
-                    $"☠️ skeptic killed #{ideaId} — research skipped (no money on corpses) · " +
-                    $"/research {ideaId} to override · /note {ideaId} to argue first",
-                    CancellationToken.None);
-                return;
+                // Operator drops earn an automatic day in court: the skeptic is strict by
+                // design, and a cheap kill of a human-typed pitch deserves a second look.
+                await progress.UpdateAsync(
+                    $"☠️ skeptic killed #{ideaId} — court of appeal reviewing…", cancellationToken);
+                AppealResult appealResult;
+                using (var appealScope = scopeFactory.CreateScope())
+                {
+                    appealResult = await appealScope.ServiceProvider
+                        .GetRequiredService<IdeaEngine.Infrastructure.Research.AppealService>()
+                        .RunAsync(ideaId.Value, cancellationToken);
+                }
+
+                if (appealResult.StoppedReason is { } appealSkip)
+                {
+                    await progress.CompleteAsync(
+                        $"☠️ skeptic killed #{ideaId} · appeal skipped — {appealSkip} · " +
+                        $"/appeal {ideaId} to retry · /research {ideaId} to override",
+                        CancellationToken.None);
+                    return;
+                }
+
+                if (appealResult.Html is { Length: > 0 })
+                {
+                    await notifier.SendAsync(appealResult.Html, cancellationToken);
+                }
+
+                if (!appealResult.Overturned)
+                {
+                    await progress.CompleteAsync(
+                        $"☠️ #{ideaId} killed by skeptic, appeal upheld — " +
+                        $"/research {ideaId} to override · /note {ideaId} to argue first",
+                        CancellationToken.None);
+                    return;
+                }
+
+                await progress.UpdateAsync(
+                    "⚖️ appeal overturned the kill — research proceeds…", cancellationToken);
             }
 
             // Checkpoint: restart after this point resumes directly at research.
@@ -600,7 +632,7 @@ internal sealed class JobRunnerHostedService(
             await bot.SendMessage(
                 chatId: telegram.AdminChatId!.Value,
                 text: $"⏸ <b>Budget cap reached</b> — jobs are being HELD, not failed.\n" +
-                    $"<i>{System.Net.WebUtility.HtmlEncode(IdeaEngine.Core.Common.TextClip.Clip(reason, 120))}</i>\n" +
+                    $"<i>{System.Net.WebUtility.HtmlEncode(reason)}</i>\n" +
                     "They auto-resume at cap reset (00:00 UTC ≈ 20:00 Ontario). Or resume now:",
                 parseMode: Telegram.Bot.Types.Enums.ParseMode.Html,
                 replyMarkup: new Telegram.Bot.Types.ReplyMarkups.InlineKeyboardMarkup(

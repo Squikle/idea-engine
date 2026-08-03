@@ -444,7 +444,7 @@ public sealed class ResearchService(
             .Append((report.Confidence * 100).ToString("F0", CultureInfo.InvariantCulture))
             .Append("% <i>(research solidity)</i>\n");
 
-        var competitors = (report.Competitors ?? []).Take(6).ToList();
+        var competitors = (report.Competitors ?? []).Take(8).ToList();
         if (competitors.Count > 0)
         {
             builder.Append("\n<b>🏪 Competitors</b>\n");
@@ -461,12 +461,12 @@ public sealed class ResearchService(
                     builder.Append(WebUtility.HtmlEncode(competitor.Name ?? "?"));
                 }
 
-                builder.Append(" — ").Append(WebUtility.HtmlEncode(TextClip.Clip(competitor.Why ?? string.Empty, 110)))
+                builder.Append(" — ").Append(WebUtility.HtmlEncode(competitor.Why ?? string.Empty))
                     .Append('\n');
             }
         }
 
-        var answered = (report.Answers ?? []).Where(a => a.IsAnswered).Take(3).ToList();
+        var answered = (report.Answers ?? []).Where(a => a.IsAnswered).Take(8).ToList();
         if (answered.Count > 0)
         {
             builder.Append("\n<b>💬 Answered</b>\n");
@@ -474,8 +474,8 @@ public sealed class ResearchService(
 
         foreach (var answer in answered)
         {
-            builder.Append("🔹 <i>").Append(WebUtility.HtmlEncode(TextClip.Clip(answer.Question ?? string.Empty, 100)))
-                .Append("</i>\n↳ ").Append(Linkify.Render(answer.Answer, 220));
+            builder.Append("🔹 <i>").Append(WebUtility.HtmlEncode(answer.Question ?? string.Empty))
+                .Append("</i>\n↳ ").Append(Linkify.Render(answer.Answer, 600));
             var source = (answer.EvidenceUrls ?? []).FirstOrDefault(u => u is { Length: > 0 });
             if (source is not null && Uri.TryCreate(source, UriKind.Absolute, out var sourceUri))
             {
@@ -485,49 +485,52 @@ public sealed class ResearchService(
             builder.Append('\n');
         }
 
-        var stillOpen = UnansweredQuestions(report, openQuestions).Take(3).ToList();
+        var stillOpen = UnansweredQuestions(report, openQuestions).Take(6).ToList();
         if (stillOpen.Count > 0)
         {
             builder.Append("\n<b>🕳 Still open after ").Append(rounds).Append(" rounds</b>\n");
             foreach (var question in stillOpen)
             {
-                builder.Append("• ").Append(WebUtility.HtmlEncode(TextClip.Clip(question, 110))).Append('\n');
+                builder.Append("• ").Append(WebUtility.HtmlEncode(question)).Append('\n');
             }
         }
 
         if (!string.IsNullOrWhiteSpace(report.DifferentiationPath))
         {
             builder.Append("\n<b>🧭 Differentiation:</b> ")
-                .Append(Linkify.Render(report.DifferentiationPath, 250)).Append('\n');
+                .Append(Linkify.Render(report.DifferentiationPath, 700)).Append('\n');
         }
 
-        var risks = (report.Risks ?? []).Take(3).ToList();
+        var risks = (report.Risks ?? []).Take(6).ToList();
         if (risks.Count > 0)
         {
-            builder.Append("<b>⚠️ Risks:</b> ")
-                .Append(WebUtility.HtmlEncode(TextClip.Clip(string.Join("; ", risks), 280))).Append('\n');
+            builder.Append("<b>⚠️ Risks</b>\n");
+            foreach (var risk in risks)
+            {
+                builder.Append("• ").Append(WebUtility.HtmlEncode(risk)).Append('\n');
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(report.MvpTest))
         {
             builder.Append("<b>🧪 MVP test:</b> ")
-                .Append(Linkify.Render(report.MvpTest, 220)).Append('\n');
+                .Append(Linkify.Render(report.MvpTest, 600)).Append('\n');
         }
 
-        var reportVariants = (report.RelatedVariants ?? []).Take(4).ToList();
+        var reportVariants = (report.RelatedVariants ?? []).Take(6).ToList();
         if (reportVariants.Count > 0)
         {
             builder.Append("<b>🔀 Stronger variants:</b> ")
-                .Append(WebUtility.HtmlEncode(TextClip.Clip(string.Join(" · ", reportVariants), 260))).Append('\n');
+                .Append(WebUtility.HtmlEncode(string.Join(" · ", reportVariants))).Append('\n');
         }
 
-        var steps = (report.NextSteps ?? []).Take(3).ToList();
+        var steps = (report.NextSteps ?? []).Take(6).ToList();
         if (steps.Count > 0)
         {
             builder.Append("<b>➡️ Next steps</b>\n");
             foreach (var step in steps)
             {
-                builder.Append("→ ").Append(WebUtility.HtmlEncode(TextClip.Clip(step, 140))).Append('\n');
+                builder.Append("→ ").Append(WebUtility.HtmlEncode(step)).Append('\n');
             }
         }
 
@@ -535,8 +538,9 @@ public sealed class ResearchService(
             .Append(" · ").Append(searches).Append(" searches · ").Append(rounds).Append(" rounds · ")
             .Append(pagesRead).Append(" pages read · /idea ").Append(idea.Id);
 
-        var text = builder.ToString().TrimEnd();
-        return text.Length <= 3900 ? text : text[..3900] + "…";
+        // No amputation: TelegramNotifier splits oversized cards into reply-chained
+        // messages at line boundaries. Arguments arrive whole or not at all.
+        return builder.ToString().TrimEnd();
     }
 
     private static string NormalizeVerdict(string? verdict) =>

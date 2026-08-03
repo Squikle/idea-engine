@@ -33,7 +33,7 @@ public sealed class AppealOptions
     public double AutoAppealMinScore { get; set; } = 0.5;
 }
 
-public sealed record AppealResult(string Html, string? NewStatus, decimal CostUsd, string? StoppedReason);
+public sealed record AppealResult(string Html, string? NewStatus, decimal CostUsd, string? StoppedReason, bool Overturned = false);
 
 /// <summary>
 /// The court of appeal: a stronger model reviews verdict-vs-evidence for depth and
@@ -85,10 +85,6 @@ public sealed class AppealService(
             .Where(r => r.IdeaId == ideaId)
             .OrderByDescending(r => r.Id)
             .FirstOrDefaultAsync(cancellationToken);
-        if (report is null)
-        {
-            return new AppealResult(string.Empty, null, 0, "nothing to appeal - no research report yet (/research first)");
-        }
 
         var worstCall = (20_000m * options.InputPricePerMTok
             + options.MaxCompletionTokens * options.OutputPricePerMTok) / 1_000_000m;
@@ -101,16 +97,33 @@ public sealed class AppealService(
 
         var builder = new StringBuilder();
         builder.Append("Idea #").Append(idea.Id).Append(": ").Append(idea.Title).Append('\n')
-            .Append("Status after research: ").Append(idea.Status).Append('\n')
+            .Append("Current status: ").Append(idea.Status).Append('\n')
             .Append("Thesis: ").Append(idea.Thesis).Append('\n');
+        if (idea.OriginalPitch is { Length: > 0 })
+        {
+            builder.Append("\nOperator's raw pitch (verbatim, before AI shaping):\n")
+                .Append(idea.OriginalPitch).Append('\n');
+        }
+
         if (idea.SkepticJson is { Length: > 0 })
         {
             builder.Append("\nSkeptic (pre-research):\n").Append(idea.SkepticJson).Append('\n');
         }
 
-        builder.Append("\nResearch verdict: ").Append(report.Verdict)
-            .Append(" (confidence ").Append(report.Confidence.ToString("F2", CultureInfo.InvariantCulture))
-            .Append(")\nResearch report:\n").Append(report.ReportJson).Append('\n');
+        if (report is not null)
+        {
+            builder.Append("\nResearch verdict: ").Append(report.Verdict)
+                .Append(" (confidence ").Append(report.Confidence.ToString("F2", CultureInfo.InvariantCulture))
+                .Append(")\nResearch report:\n").Append(report.ReportJson).Append('\n');
+        }
+        else
+        {
+            builder.Append("\nNO RESEARCH WAS RUN. The idea was killed pre-research by the skeptic ")
+                .Append("alone. Judge whether that kill is justified from the pitch and the skeptic's ")
+                .Append("reasoning: a kill WITHOUT evidence should stand only for self-evidently fatal ")
+                .Append("flaws (impossible economics, no conceivable user, already-free commodity). ")
+                .Append("Doubt is a reason to research, not to kill.\n");
+        }
 
         if (idea.NotesJson is { Length: > 0 })
         {
@@ -146,15 +159,17 @@ public sealed class AppealService(
         }
 
         string? newStatus = null;
+        var priorVerdict = report?.Verdict ?? "no-go"; // a pre-research kill is a no-go
         var overturned = verdict.NewVerdict is { Length: > 0 } nv
-            && !string.Equals(nv, report.Verdict, StringComparison.OrdinalIgnoreCase);
+            && !string.Equals(nv, priorVerdict, StringComparison.OrdinalIgnoreCase);
         if (overturned)
         {
             newStatus = verdict.NewVerdict!.ToLowerInvariant() switch
             {
-                "go" => "hot",
+                // Without research a revived idea is a candidate, not hot - evidence first.
+                "go" => report is null ? "candidate" : "hot",
                 "no-go" or "nogo" => "dismissed",
-                _ => "uncertain",
+                _ => report is null ? "candidate" : "uncertain",
             };
             idea.Status = newStatus;
             idea.Verified = false; // overturned ideas return to the review inbox
@@ -169,26 +184,28 @@ public sealed class AppealService(
 
         var html = new StringBuilder();
         html.Append("⚖️ <b>Appeal #").Append(idea.Id).Append(" · ")
-            .Append(WebUtility.HtmlEncode(TextClip.Clip(idea.Title, 60))).Append("</b>\n")
+            .Append(WebUtility.HtmlEncode(TextClip.Clip(idea.Title, 60))).Append("</b>")
+            .Append(report is null ? " <i>(pre-research kill)</i>\n" : "\n")
             .Append("Judgment was: <b>").Append(verdict.Assessment ?? "?").Append("</b>");
         html.Append(overturned
             ? $" → overturned to {Ui.Verdict(verdict.NewVerdict)} · status {newStatus}\n"
             : " → verdict upheld\n");
 
-        foreach (var missed in (verdict.Missed ?? []).Take(3))
+        // Full arguments, never clipped - the notifier splits long messages safely.
+        foreach (var missed in verdict.Missed ?? [])
         {
-            html.Append("• ").Append(WebUtility.HtmlEncode(TextClip.Clip(missed, 130))).Append('\n');
+            html.Append("• ").Append(WebUtility.HtmlEncode(missed)).Append('\n');
         }
 
         if (verdict.Justification is { Length: > 0 })
         {
-            html.Append("<i>").Append(WebUtility.HtmlEncode(TextClip.Clip(verdict.Justification, 300))).Append("</i>\n");
+            html.Append("<i>").Append(WebUtility.HtmlEncode(verdict.Justification)).Append("</i>\n");
         }
 
         html.Append(Ui.Spend).Append(" $").Append(cost.ToString("F3", CultureInfo.InvariantCulture))
             .Append(" · /idea ").Append(idea.Id);
 
-        return new AppealResult(html.ToString(), newStatus, cost, null);
+        return new AppealResult(html.ToString(), newStatus, cost, null, overturned);
     }
 
     private sealed record AppealDto(

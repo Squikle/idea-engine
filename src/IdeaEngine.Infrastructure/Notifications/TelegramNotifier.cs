@@ -16,22 +16,27 @@ public sealed class TelegramNotifier(
 
     public async Task SendAsync(string html, CancellationToken cancellationToken)
     {
+        int? previousId = null;
         foreach (var chunk in SplitAtLines(html))
         {
-            await SendChunkAsync(chunk, cancellationToken);
+            // Continuations reply to the previous chunk so long cards read as one thread.
+            previousId = await SendChunkAsync(chunk, previousId, cancellationToken) ?? previousId;
         }
     }
 
-    private async Task SendChunkAsync(string html, CancellationToken cancellationToken)
+    private async Task<int?> SendChunkAsync(string html, int? replyTo, CancellationToken cancellationToken)
     {
+        var replyParameters = replyTo is { } id ? new ReplyParameters { MessageId = id } : null;
         try
         {
-            await botClient.SendMessage(
+            var sent = await botClient.SendMessage(
                 chatId: adminChatId,
                 text: html,
                 parseMode: ParseMode.Html,
+                replyParameters: replyParameters,
                 linkPreviewOptions: LinkPreviewOptions.Disabled, // keeps messages compact
                 cancellationToken: cancellationToken);
+            return sent.MessageId;
         }
         catch (Telegram.Bot.Exceptions.ApiRequestException ex)
         {
@@ -41,20 +46,24 @@ public sealed class TelegramNotifier(
             {
                 var plain = System.Net.WebUtility.HtmlDecode(
                     System.Text.RegularExpressions.Regex.Replace(html, "<[^>]+>", string.Empty));
-                await botClient.SendMessage(
+                var sent = await botClient.SendMessage(
                     chatId: adminChatId,
                     text: plain,
+                    replyParameters: replyParameters,
                     linkPreviewOptions: LinkPreviewOptions.Disabled,
                     cancellationToken: cancellationToken);
+                return sent.MessageId;
             }
             catch (Exception inner) when (inner is not OperationCanceledException)
             {
                 logger.LogError(inner, "Telegram send failed; message dropped ({Length} chars)", html.Length);
+                return null;
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogError(ex, "Telegram send failed; message dropped ({Length} chars)", html.Length);
+            return null;
         }
     }
 

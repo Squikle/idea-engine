@@ -19,6 +19,7 @@ public static class ReasoningMilestones
         new(new Version(0, 18, 0), "playbook lenses + arbitrage valuation (empty dimension != saturated)"),
         new(new Version(0, 20, 0), "individual judgment (no tournament), idea relations, archive corpus"),
         new(new Version(0, 25, 1), "API/MCP-first upstream lens (shovel-seller variants in judging)"),
+        new(new Version(0, 27, 0), "pre-research skeptic kills auto-appealed on operator drops; overturn revives to candidate"),
     ];
 
     /// <summary>Upgrades a report produced at <paramref name="reportVersion"/> has never seen.

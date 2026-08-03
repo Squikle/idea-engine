@@ -208,6 +208,7 @@ public sealed class IdeationService(
             DistributionNote = Truncate(idea.DistributionNote, 390),
             Status = advanced ? "candidate" : "dismissed",
             Origin = "operator",
+            OriginalPitch = pitch,
             VariantsJson = idea.Variants is { Count: > 0 }
                 ? JsonSerializer.Serialize(idea.Variants.Take(6), LlmJson.Options)
                 : null,
@@ -227,16 +228,20 @@ public sealed class IdeationService(
         builder.Append(Ui.Drop).Append(" <b>#").Append(entity.Id).Append(" · ")
             .Append(WebUtility.HtmlEncode(entity.Title)).Append("</b> 🧑\n")
             .Append("Skeptic: ").Append(advanced ? "🟢 advance" : "☠️ kill");
+        builder.Append('\n');
         if (review?.KillReasons is { Count: > 0 } reasons && !advanced)
         {
-            builder.Append(" — ").Append(WebUtility.HtmlEncode(TextClip.Clip(reasons[0], 120)));
+            // Every reason, in full - the owner argues with arguments, not with "…".
+            foreach (var reason in reasons)
+            {
+                builder.Append("☠ ").Append(WebUtility.HtmlEncode(reason)).Append('\n');
+            }
         }
 
-        builder.Append('\n');
         if (idea.Variants is { Count: > 0 })
         {
             builder.Append("Variants: ")
-                .Append(WebUtility.HtmlEncode(TextClip.Clip(string.Join(" · ", idea.Variants.Take(5)), 300)))
+                .Append(WebUtility.HtmlEncode(string.Join(" · ", idea.Variants.Take(6))))
                 .Append('\n');
         }
 

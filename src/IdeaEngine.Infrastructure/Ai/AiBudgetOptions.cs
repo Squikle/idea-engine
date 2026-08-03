@@ -17,4 +17,13 @@ public sealed class AiBudgetOptions
     /// Catches misconfiguration (wrong model/price/token budget) before money moves.
     /// </summary>
     public decimal MaxUsdPerCall { get; set; } = 0.15m;
+
+    /// <summary>
+    /// Per-stage overrides of <see cref="MaxUsdPerCall"/> for stages that are
+    /// expensive BY DESIGN (appeal runs a premium model over a long context).
+    /// </summary>
+    public Dictionary<string, decimal> MaxUsdPerCallByStage { get; set; } = new()
+    {
+        ["appeal"] = 0.45m,
+    };
 }
