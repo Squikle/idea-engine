@@ -98,6 +98,7 @@ public sealed class IdeaEngineDbContext(DbContextOptions<IdeaEngineDbContext> op
             idea.HasIndex(x => x.Verified);
             idea.Property(x => x.NotesJson).HasColumnType("jsonb");
             idea.Property(x => x.AppealJson).HasColumnType("jsonb");
+            idea.Property(x => x.PartnerJson).HasColumnType("jsonb");
             idea.Property(x => x.RelatedJson).HasColumnType("jsonb");
             idea.Property(x => x.Playbook).HasMaxLength(64);
             idea.Property(x => x.VariantsJson).HasColumnType("jsonb");

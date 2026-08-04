@@ -19,6 +19,19 @@ public sealed class IdeationOptions
 
     public decimal SkepticOutputPricePerMTok { get; set; } = 0.87m;
 
+    /// <summary>Copy with runtime model overrides applied (never mutate the bound singleton).</summary>
+    public IdeationOptions WithModels(ResolvedModel builder, ResolvedModel skeptic)
+    {
+        var clone = (IdeationOptions)MemberwiseClone();
+        clone.BuilderModel = builder.Model;
+        clone.BuilderInputPricePerMTok = builder.InPerMTok;
+        clone.BuilderOutputPricePerMTok = builder.OutPerMTok;
+        clone.SkepticModel = skeptic.Model;
+        clone.SkepticInputPricePerMTok = skeptic.InPerMTok;
+        clone.SkepticOutputPricePerMTok = skeptic.OutPerMTok;
+        return clone;
+    }
+
     /// <summary>Stage daily cap (stage name: "ideation").</summary>
     public decimal DailyUsdCap { get; set; } = 3.00m;
 

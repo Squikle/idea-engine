@@ -14,6 +14,16 @@ public sealed class TriageOptions
     /// <summary>USD per million output tokens.</summary>
     public decimal OutputPricePerMTok { get; set; } = 0.40m;
 
+    /// <summary>Copy with a runtime model override applied.</summary>
+    public TriageOptions WithModel(ResolvedModel resolved)
+    {
+        var clone = (TriageOptions)MemberwiseClone();
+        clone.Model = resolved.Model;
+        clone.InputPricePerMTok = resolved.InPerMTok;
+        clone.OutputPricePerMTok = resolved.OutPerMTok;
+        return clone;
+    }
+
     /// <summary>Hard daily spend cap for this stage; stage pauses until midnight UTC.</summary>
     public decimal DailyUsdCap { get; set; } = 1.00m;
 

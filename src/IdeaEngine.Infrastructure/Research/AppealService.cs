@@ -31,6 +31,16 @@ public sealed class AppealOptions
 
     /// <summary>Auto-appeal fires when a no-go verdict carries a score at/above this.</summary>
     public double AutoAppealMinScore { get; set; } = 0.5;
+
+    /// <summary>Copy with a runtime model override applied.</summary>
+    public AppealOptions WithModel(ResolvedModel resolved)
+    {
+        var clone = (AppealOptions)MemberwiseClone();
+        clone.Model = resolved.Model;
+        clone.InputPricePerMTok = resolved.InPerMTok;
+        clone.OutputPricePerMTok = resolved.OutPerMTok;
+        return clone;
+    }
 }
 
 public sealed record AppealResult(string Html, string? NewStatus, decimal CostUsd, string? StoppedReason, bool Overturned = false);
@@ -46,6 +56,7 @@ public sealed class AppealService(
     BudgetGuard budgetGuard,
     TimeProvider timeProvider,
     IOptions<AppealOptions> appealOptions,
+    ModelRegistry models,
     ILogger<AppealService> logger)
 {
     private const string StageName = "appeal";
@@ -83,7 +94,9 @@ public sealed class AppealService(
 
     public async Task<AppealResult> RunAsync(long ideaId, CancellationToken cancellationToken)
     {
-        var options = appealOptions.Value;
+        var options = appealOptions.Value.WithModel(
+            await models.ResolveAsync("appeal", appealOptions.Value.Model,
+                appealOptions.Value.InputPricePerMTok, appealOptions.Value.OutputPricePerMTok, cancellationToken));
         if (!options.Enabled || !chat.IsConfigured)
         {
             return new AppealResult(string.Empty, null, 0, "appeal disabled or OPENROUTER_API_KEY missing");
@@ -241,7 +254,8 @@ public sealed class AppealService(
         }
 
         html.Append(Ui.Spend).Append(" $").Append(cost.ToString("F3", CultureInfo.InvariantCulture))
-            .Append(" · /idea ").Append(idea.Id);
+            .Append(" · ").Append(Ui.Cmd("idea", idea.Id)).Append(" · ").Append(Ui.Cmd("research", idea.Id))
+            .Append(" digests this appeal");
 
         return new AppealResult(html.ToString(), newStatus, cost, null, overturned);
     }

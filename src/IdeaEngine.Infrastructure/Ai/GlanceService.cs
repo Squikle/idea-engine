@@ -23,6 +23,7 @@ public sealed class GlanceService(
     BudgetGuard budgetGuard,
     TimeProvider timeProvider,
     IOptions<GlanceOptions> glanceOptions,
+    ModelRegistry models,
     ILogger<GlanceService> logger)
 {
     private const string StageName = "glance";
@@ -49,7 +50,10 @@ public sealed class GlanceService(
             return glances;
         }
 
-        var options = glanceOptions.Value;
+        var __base = glanceOptions.Value;
+        var options = __base.WithModel(
+            await models.ResolveAsync("glance", __base.Model,
+                __base.InputPricePerMTok, __base.OutputPricePerMTok, cancellationToken));
         var worstCall = (2_500m * options.InputPricePerMTok
             + options.MaxCompletionTokens * options.OutputPricePerMTok) / 1_000_000m;
         var check = await budgetGuard.CheckAsync(

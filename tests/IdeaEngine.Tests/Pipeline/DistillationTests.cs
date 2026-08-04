@@ -64,6 +64,34 @@ public sealed class DistillationTests
         Assert.False(Staleness.IsStale(latest, reportAt, reportAt.AddHours(-1), null));
     }
 
+    [Theory]
+    [InlineData("idea5", "idea", "5")]
+    [InlineData("research124", "research", "124")]
+    [InlineData("note7", "note", "7")]
+    public void SplitCompactCommand_Splits(string input, string command, string id)
+    {
+        var result = Ui.SplitCompactCommand(input);
+        Assert.NotNull(result);
+        Assert.Equal(command, result!.Value.Command);
+        Assert.Equal(id, result.Value.Id);
+    }
+
+    [Theory]
+    [InlineData("idea")]
+    [InlineData("status")]
+    [InlineData("bump")]
+    public void SplitCompactCommand_PlainCommands_Null(string input)
+    {
+        Assert.Null(Ui.SplitCompactCommand(input));
+    }
+
+    [Fact]
+    public void Cmd_EmitsCompactTappableForm()
+    {
+        Assert.Equal("/idea5", Ui.Cmd("idea", 5));
+        Assert.Equal("/research124", Ui.Cmd("research", 124));
+    }
+
     [Fact]
     public void ConcernStatus_Glyphs()
     {

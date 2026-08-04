@@ -59,6 +59,7 @@ public sealed class ReevalService(
     TimeProvider timeProvider,
     IOptions<ReevalOptions> reevalOptions,
     IOptions<GlanceOptions> nanoOptions,
+    ModelRegistry models,
     ILogger<ReevalService> logger)
 {
     private const string StageName = "reeval";
@@ -189,7 +190,10 @@ public sealed class ReevalService(
                 $"2/3 nano-screening {shortlist.Count} candidate(s) (one batched call)…", cancellationToken);
         }
 
-        var nano = nanoOptions.Value;
+        var __base = nanoOptions.Value;
+        var nano = __base.WithModel(
+            await models.ResolveAsync("reeval", __base.Model,
+                __base.InputPricePerMTok, __base.OutputPricePerMTok, cancellationToken));
         var worstCall = (4_000m * nano.InputPricePerMTok + 900 * nano.OutputPricePerMTok) / 1_000_000m;
         var check = await budgetGuard.CheckAsync(
             StageName, options.DailyUsdCap, worstCall, worstCall, cancellationToken);

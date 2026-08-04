@@ -73,6 +73,19 @@ public static class Ui
         _ => Live,
     };
 
+    /// <summary>
+    /// Tappable command hint: Telegram only links the bare /command token, so id-taking
+    /// hints are emitted compact (/idea5) and the dispatcher parses that form back.
+    /// </summary>
+    public static string Cmd(string name, long id) => $"/{name}{id}";
+
+    /// <summary>Splits the compact command form back: "idea5" → ("idea", "5"). Null when plain.</summary>
+    public static (string Command, string Id)? SplitCompactCommand(string command)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(command, "^([a-z]+?)([0-9]+)$");
+        return match.Success ? (match.Groups[1].Value, match.Groups[2].Value) : null;
+    }
+
     /// <summary>Concern-ledger status glyphs: 🔥 fatal · 🔓 open · ✅ mitigated · 🕊 waived.</summary>
     public static string ConcernStatus(string? status) => status?.Trim().ToLowerInvariant() switch
     {

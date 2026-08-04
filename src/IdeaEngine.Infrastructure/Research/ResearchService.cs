@@ -34,6 +34,7 @@ public sealed class ResearchService(
     BudgetGuard budgetGuard,
     TimeProvider timeProvider,
     IOptions<ResearchOptions> researchOptions,
+    ModelRegistry models,
     ILogger<ResearchService> logger)
 {
     private const string StageName = "research";
@@ -42,6 +43,11 @@ public sealed class ResearchService(
         long ideaId, IProgressHandle? progress, CancellationToken cancellationToken)
     {
         var options = researchOptions.Value;
+        options = options.WithModels(
+            await models.ResolveAsync("research", options.Model,
+                options.InputPricePerMTok, options.OutputPricePerMTok, cancellationToken),
+            await models.ResolveAsync("repair", options.RepairModel,
+                options.RepairInputPricePerMTok, options.RepairOutputPricePerMTok, cancellationToken));
         if (!options.Enabled || !chat.IsConfigured)
         {
             return Stopped("research disabled or OPENROUTER_API_KEY missing");
@@ -704,7 +710,8 @@ public sealed class ResearchService(
 
         builder.Append('\n').Append(Ui.Spend).Append(" $").Append(cost.ToString("F4", CultureInfo.InvariantCulture))
             .Append(" · ").Append(searches).Append(" searches · ").Append(rounds).Append(" rounds · ")
-            .Append(pagesRead).Append(" pages read · /idea ").Append(idea.Id);
+            .Append(pagesRead).Append(" pages read · ").Append(Ui.Cmd("idea", idea.Id))
+            .Append(" · ").Append(Ui.Cmd("partner", idea.Id)).Append(" for the blunt take");
 
         // No amputation: TelegramNotifier splits oversized cards into reply-chained
         // messages at line boundaries. Arguments arrive whole or not at all.

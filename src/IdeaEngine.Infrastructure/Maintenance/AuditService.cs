@@ -27,6 +27,7 @@ public sealed class AuditService(
     IStatusTracker statusTracker,
     TimeProvider timeProvider,
     IOptions<GlanceOptions> nanoOptions,
+    ModelRegistry models,
     ILogger<AuditService> logger)
 {
     private const string StageName = "audit";
@@ -149,7 +150,10 @@ public sealed class AuditService(
             return null;
         }
 
-        var options = nanoOptions.Value;
+        var __base = nanoOptions.Value;
+        var options = __base.WithModel(
+            await models.ResolveAsync("audit", __base.Model,
+                __base.InputPricePerMTok, __base.OutputPricePerMTok, cancellationToken));
         var worstCall = (1_000m * options.InputPricePerMTok
             + 600 * options.OutputPricePerMTok) / 1_000_000m;
         var check = await budgetGuard.CheckAsync(

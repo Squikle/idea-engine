@@ -28,6 +28,7 @@ public sealed class RelationService(
     BudgetGuard budgetGuard,
     TimeProvider timeProvider,
     IOptions<GlanceOptions> nanoOptions,
+    IdeaEngine.Infrastructure.Ai.ModelRegistry models,
     ILogger<RelationService> logger)
 {
     private const string StageName = "relate";
@@ -67,7 +68,9 @@ public sealed class RelationService(
             return empty;
         }
 
-        var options = nanoOptions.Value;
+        var options = nanoOptions.Value.WithModel(
+    await models.ResolveAsync("relate", nanoOptions.Value.Model,
+        nanoOptions.Value.InputPricePerMTok, nanoOptions.Value.OutputPricePerMTok, cancellationToken));
         var worstCall = (4_000m * options.InputPricePerMTok + 800 * options.OutputPricePerMTok) / 1_000_000m;
         var check = await budgetGuard.CheckAsync(StageName, 0.05m, worstCall, worstCall, cancellationToken);
         if (!check.Allowed)

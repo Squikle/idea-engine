@@ -26,6 +26,7 @@ public sealed class TriageService(
     BudgetGuard budgetGuard,
     TimeProvider timeProvider,
     IOptions<TriageOptions> triageOptions,
+    IdeaEngine.Infrastructure.Ai.ModelRegistry models,
     ILogger<TriageService> logger)
 {
     private const string StageName = "triage";
@@ -34,7 +35,10 @@ public sealed class TriageService(
 
     public async Task<TriageRoundResult> RunRoundAsync(CancellationToken cancellationToken)
     {
-        var options = triageOptions.Value;
+        var __base = triageOptions.Value;
+        var options = __base.WithModel(
+            await models.ResolveAsync("triage", __base.Model,
+                __base.InputPricePerMTok, __base.OutputPricePerMTok, cancellationToken));
 
         var prefiltered = await PromoteNewItemsAsync(cancellationToken);
 

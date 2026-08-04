@@ -24,6 +24,16 @@ public sealed class DigOptions
 
     public decimal OutputPricePerMTok { get; set; } = 10.00m;
 
+    /// <summary>Copy with a runtime model override applied.</summary>
+    public DigOptions WithModel(IdeaEngine.Infrastructure.Ai.ResolvedModel resolved)
+    {
+        var clone = (DigOptions)MemberwiseClone();
+        clone.Model = resolved.Model;
+        clone.InputPricePerMTok = resolved.InPerMTok;
+        clone.OutputPricePerMTok = resolved.OutPerMTok;
+        return clone;
+    }
+
     public decimal DailyUsdCap { get; set; } = 1.00m;
 
     public int MaxBranches { get; set; } = 6;
@@ -49,6 +59,7 @@ public sealed class DigService(
     BudgetGuard budgetGuard,
     TimeProvider timeProvider,
     IOptions<DigOptions> digOptions,
+    IdeaEngine.Infrastructure.Ai.ModelRegistry models,
     ILogger<DigService> logger)
 {
     private const string StageName = "dig";
@@ -84,7 +95,9 @@ public sealed class DigService(
     public async Task<DigRunResult> RunAsync(
         string topic, IProgressHandle? progress, CancellationToken cancellationToken)
     {
-        var options = digOptions.Value;
+        var options = digOptions.Value.WithModel(
+            await models.ResolveAsync("dig", digOptions.Value.Model,
+                digOptions.Value.InputPricePerMTok, digOptions.Value.OutputPricePerMTok, cancellationToken));
         if (!options.Enabled || !chat.IsConfigured)
         {
             return new DigRunResult(string.Empty, 0, 0, "dig disabled or OPENROUTER_API_KEY missing", []);

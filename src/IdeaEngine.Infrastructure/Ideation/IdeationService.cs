@@ -38,6 +38,7 @@ public sealed class IdeationService(
     IAdviceJournal adviceJournal,
     TimeProvider timeProvider,
     IOptions<IdeationOptions> ideationOptions,
+    IdeaEngine.Infrastructure.Ai.ModelRegistry models,
     ILogger<IdeationService> logger)
 {
     private const string StageName = "ideation";
@@ -49,7 +50,7 @@ public sealed class IdeationService(
     public async Task<IdeationBatchResult> RunProductSessionsAsync(
         int count, string? forcedPlaybook, IProgressHandle? progress, CancellationToken cancellationToken)
     {
-        var options = ideationOptions.Value;
+        var options = await ResolveOptionsAsync(cancellationToken);
         count = Math.Clamp(count, 1, options.MaxSessionsPerCommand);
 
         if (!options.Enabled || !chat.IsConfigured)
@@ -133,7 +134,7 @@ public sealed class IdeationService(
     public async Task<OperatorIdeaResult> RunOperatorIdeaAsync(
         string pitch, IProgressHandle? progress, CancellationToken cancellationToken)
     {
-        var options = ideationOptions.Value;
+        var options = await ResolveOptionsAsync(cancellationToken);
         if (!options.Enabled || !chat.IsConfigured)
         {
             return new OperatorIdeaResult(null, null, false, string.Empty, 0, "ideation disabled or OPENROUTER_API_KEY missing");
@@ -257,7 +258,7 @@ public sealed class IdeationService(
     public async Task<MetaAdviceResult> RunMetaSessionAsync(
         IProgressHandle? progress, CancellationToken cancellationToken)
     {
-        var options = ideationOptions.Value;
+        var options = await ResolveOptionsAsync(cancellationToken);
         if (!options.Enabled || !chat.IsConfigured)
         {
             return new MetaAdviceResult(string.Empty, 0, 0, "ideation disabled or OPENROUTER_API_KEY missing");
@@ -578,6 +579,16 @@ public sealed class IdeationService(
 
     private static string? Truncate(string? value, int max) =>
         value is null || value.Length <= max ? value : value[..max];
+
+    private async Task<IdeationOptions> ResolveOptionsAsync(CancellationToken cancellationToken)
+    {
+        var options = ideationOptions.Value;
+        return options.WithModels(
+            await models.ResolveAsync("builder", options.BuilderModel,
+                options.BuilderInputPricePerMTok, options.BuilderOutputPricePerMTok, cancellationToken),
+            await models.ResolveAsync("skeptic", options.SkepticModel,
+                options.SkepticInputPricePerMTok, options.SkepticOutputPricePerMTok, cancellationToken));
+    }
 
     private static decimal WorstBuilderCallUsd(IdeationOptions o) =>
         (8_000m * o.BuilderInputPricePerMTok + o.MaxCompletionTokens * o.BuilderOutputPricePerMTok) / 1_000_000m;

@@ -45,6 +45,9 @@ public sealed class IdeaEntity
     /// <summary>Latest appeal verdict (assessment/overturn/justification), jsonb.</summary>
     public string? AppealJson { get; set; }
 
+    /// <summary>Latest partner take ({text, at, model}), jsonb.</summary>
+    public string? PartnerJson { get; set; }
+
     /// <summary>Playbook lens key(s) used at ideation, space-separated.</summary>
     public string? Playbook { get; set; }
 

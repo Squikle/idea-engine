@@ -207,14 +207,14 @@ internal sealed class AutopilotHostedService(
                 .Append((config.MinRatingForResearch * 100).ToString("F0"))
                 .Append("% floor)</i> ")
                 .Append(System.Net.WebUtility.HtmlEncode(IdeaEngine.Core.Common.TextClip.Clip(title, 40)))
-                .Append(" — /research ").Append(id).Append(" to force\n");
+                .Append(" — ").Append(IdeaEngine.Core.Common.Ui.Cmd("research", id)).Append(" to force\n");
         }
 
         foreach (var (id, title, _) in overflow)
         {
             builder.Append("⏳ deferred #").Append(id).Append(" (daily auto-limit) ")
                 .Append(System.Net.WebUtility.HtmlEncode(IdeaEngine.Core.Common.TextClip.Clip(title, 40)))
-                .Append(" — /research ").Append(id).Append('\n');
+                .Append(" — ").Append(IdeaEngine.Core.Common.Ui.Cmd("research", id)).Append('\n');
         }
 
         builder.Append("<i>every idea judged individually · floor is absolute, not relative · /queue to watch</i>");

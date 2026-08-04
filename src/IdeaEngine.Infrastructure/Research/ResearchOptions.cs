@@ -1,3 +1,5 @@
+using IdeaEngine.Infrastructure.Ai;
+
 namespace IdeaEngine.Infrastructure.Research;
 
 /// <summary>Bound from configuration section <c>IdeaEngine:Ai:Research</c>.</summary>
@@ -18,6 +20,19 @@ public sealed class ResearchOptions
     public decimal RepairInputPricePerMTok { get; set; } = 0.05m;
 
     public decimal RepairOutputPricePerMTok { get; set; } = 0.40m;
+
+    /// <summary>Copy with runtime model overrides applied (never mutate the bound singleton).</summary>
+    public ResearchOptions WithModels(ResolvedModel main, ResolvedModel repair)
+    {
+        var clone = (ResearchOptions)MemberwiseClone();
+        clone.Model = main.Model;
+        clone.InputPricePerMTok = main.InPerMTok;
+        clone.OutputPricePerMTok = main.OutPerMTok;
+        clone.RepairModel = repair.Model;
+        clone.RepairInputPricePerMTok = repair.InPerMTok;
+        clone.RepairOutputPricePerMTok = repair.OutPerMTok;
+        return clone;
+    }
 
     /// <summary>Stage daily cap (stage name: "research"). ~$0.05-0.10 per report.</summary>
     public decimal DailyUsdCap { get; set; } = 2.00m;

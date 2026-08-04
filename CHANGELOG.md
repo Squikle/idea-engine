@@ -5,6 +5,26 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.30.0 — 2026-08-04
+
+### Added — the partner seat (Wave 2)
+- **/partner N** (+ 🤝 button on idea cards): your right hand reads the FULL judgment
+  trail plus a portfolio snapshot and answers in ≤10 blunt lines — effort vs payoff for
+  you specifically, how it ranks against your other ideas, and a final BUILD / PARK /
+  FIX FIRST / KILL. Opus by default, swappable. Manual only (it costs real cents).
+- **/origin N** (+ 🧿 button): your verbatim pitch + the optimistic composite — thesis,
+  variants, your notes, the advocate's strongest case and pivots (resurfaced from stored
+  artifacts), what the court noticed in your favor. The idea at its best; zero concern walls.
+- **/models**: every AI stage with its model, prices and why — and runtime swapping:
+  `/models set research anthropic/claude-sonnet-5 2 10` (any OpenRouter id, live-ping
+  validated before saving; known models autofill prices) · `/models reset <stage>`.
+  New model drops tomorrow? Paste its id, done — no code changes.
+- **Tappable id-commands everywhere**: hints are now emitted as /idea5, /research24 —
+  Telegram makes the whole token clickable. Typed long form still works.
+- **/ideas rework**: sort toggle (⭐ score ↔ 🕐 newest) on every tab + 🌊 `fresh` view
+  (last 48h, any status, including fresh kills) — new auto-ideas are now findable AND
+  comparable inside their bracket.
+
 ## 0.29.0 — 2026-08-04
 
 ### Added — the distillation engine (Wave 1)

@@ -262,7 +262,7 @@ internal sealed class JobRunnerHostedService(
                 {
                     await progress.CompleteAsync(
                         $"☠️ skeptic killed #{ideaId} · appeal skipped — {appealSkip} · " +
-                        $"/appeal {ideaId} to retry · /research {ideaId} to override",
+                        $"{IdeaEngine.Core.Common.Ui.Cmd("appeal", ideaId.Value)} to retry · {IdeaEngine.Core.Common.Ui.Cmd("research", ideaId.Value)} to override",
                         CancellationToken.None);
                     return;
                 }
@@ -276,7 +276,7 @@ internal sealed class JobRunnerHostedService(
                 {
                     await progress.CompleteAsync(
                         $"☠️ #{ideaId} killed by skeptic, appeal upheld — " +
-                        $"/research {ideaId} to override · /note {ideaId} to argue first",
+                        $"{IdeaEngine.Core.Common.Ui.Cmd("research", ideaId.Value)} to override · {IdeaEngine.Core.Common.Ui.Cmd("note", ideaId.Value)} to argue first",
                         CancellationToken.None);
                     return;
                 }

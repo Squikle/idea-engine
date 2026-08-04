@@ -25,5 +25,7 @@ public sealed class AiBudgetOptions
     public Dictionary<string, decimal> MaxUsdPerCallByStage { get; set; } = new()
     {
         ["appeal"] = 0.45m,
+        ["partner"] = 0.45m,
+        ["hand"] = 0.45m,
     };
 }
