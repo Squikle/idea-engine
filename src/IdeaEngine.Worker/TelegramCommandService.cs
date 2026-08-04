@@ -850,7 +850,7 @@ internal sealed class TelegramCommandService(
         return string.Empty; // the progress message is the reply
     }
 
-    private static readonly string[] IdeaFilters = ["top", "all", "hot", "uncertain", "new", "dead", "seen"];
+    private static readonly string[] IdeaFilters = ["top", "all", "hot", "uncertain", "new", "stale", "dead", "seen"];
 
     private async Task<string> SendIdeasPageAsync(string? argument, CancellationToken cancellationToken)
     {
@@ -860,6 +860,7 @@ internal sealed class TelegramCommandService(
             "hot" => "hot",
             "uncertain" => "uncertain",
             "new" => "new",
+            "stale" or "outdated" => "stale",
             "dead" or "killed" => "dead",
             "seen" or "verified" => "seen",
             _ => "top",
@@ -1051,18 +1052,30 @@ internal sealed class TelegramCommandService(
         var latestReports = (await db.ResearchReports
                 .Where(r => ideaIds.Contains(r.IdeaId))
                 .OrderByDescending(r => r.Id)
-                .Select(r => new { r.IdeaId, r.ReportJson })
+                .Select(r => new { r.IdeaId, r.ReportJson, r.CreatedAt, r.EngineVersion })
                 .ToListAsync(cancellationToken))
             .GroupBy(r => r.IdeaId)
-            .ToDictionary(
-                g => g.Key,
-                g => IdeaJson.SafeDeserialize<ResearchReportDto>(g.First().ReportJson));
+            .ToDictionary(g => g.Key, g => g.First());
 
         var scored = ideas
-            .Select(i => new
+            .Select(i =>
             {
-                Idea = i,
-                Score = IdeaJson.ComputeScore(i, latestReports.GetValueOrDefault(i.Id)),
+                var reportRow = latestReports.GetValueOrDefault(i.Id);
+                var dto = reportRow is null ? null : IdeaJson.SafeDeserialize<ResearchReportDto>(reportRow.ReportJson);
+                var stale = false;
+                if (reportRow is not null)
+                {
+                    var (lastNoteAt, appealAt) = IdeaEngine.Infrastructure.Ideation.IdeaScores.JudgmentMoments(i);
+                    stale = IdeaEngine.Core.Common.Staleness.IsStale(
+                        reportRow.EngineVersion, reportRow.CreatedAt, lastNoteAt, appealAt);
+                }
+
+                return new
+                {
+                    Idea = i,
+                    Score = IdeaJson.ComputeScore(i, dto, reportRow?.CreatedAt),
+                    Stale = stale,
+                };
             })
             .ToList();
 
@@ -1076,6 +1089,8 @@ internal sealed class TelegramCommandService(
             "uncertain" => scored.Where(x => x.Idea.Status is "uncertain" or "validated" && !x.Idea.Verified)
                 .OrderByDescending(x => x.Score.Total).ToList(),
             "new" => scored.Where(x => x.Idea.Status == "candidate" && !x.Idea.Verified)
+                .OrderByDescending(x => x.Score.Total).ToList(),
+            "stale" => scored.Where(x => x.Stale && x.Idea.Status != "dismissed")
                 .OrderByDescending(x => x.Score.Total).ToList(),
             "dead" => scored.Where(x => x.Idea.Status == "dismissed")
                 .OrderByDescending(x => x.Idea.Id).ToList(),
@@ -1119,6 +1134,7 @@ internal sealed class TelegramCommandService(
 
             builder.Append(IdeaEngine.Core.Common.Ui.IdeaStatus(entry.Idea.Status)).Append(tier)
                 .Append(" <code>").Append(id).Append(pct).Append("</code> ")
+                .Append(entry.Stale ? "⌛ " : string.Empty)
                 .Append(entry.Idea.NotesJson is { Length: > 2 } ? "🗒 " : string.Empty)
                 .Append(System.Net.WebUtility.HtmlEncode(entry.Idea.Title));
             if (entry.Idea.Origin == "operator")
@@ -1165,6 +1181,7 @@ internal sealed class TelegramCommandService(
         "hot" => "🔥 hot",
         "uncertain" => "🤔 uncertain",
         "new" => "🌱 new",
+        "stale" => "⌛ stale research (re-run would matter)",
         "dead" => "☠️ killed",
         _ => "all by number",
     };
@@ -1176,6 +1193,7 @@ internal sealed class TelegramCommandService(
         "hot" => "🔥",
         "uncertain" => "🤔",
         "new" => "🌱",
+        "stale" => "⌛",
         "dead" => "☠️",
         _ => "All",
     };
@@ -1781,7 +1799,7 @@ internal sealed class TelegramCommandService(
         var lastResearch = await db.ResearchReports
             .Where(r => r.IdeaId == ideaId)
             .OrderByDescending(r => r.Id)
-            .Select(r => new { r.Verdict, r.Confidence, r.SearchesUsed, r.CostUsd, r.CreatedAt, r.ReportJson })
+            .Select(r => new { r.Verdict, r.Confidence, r.SearchesUsed, r.CostUsd, r.CreatedAt, r.ReportJson, r.EngineVersion })
             .FirstOrDefaultAsync(cancellationToken);
         var researchReport = lastResearch is null
             ? null
@@ -1795,13 +1813,14 @@ internal sealed class TelegramCommandService(
             .Append(idea.Playbook is { Length: > 0 } ? $" · 📚 {idea.Playbook}" : string.Empty)
             .Append('\n');
 
-        var score = IdeaJson.ComputeScore(idea, researchReport);
+        var score = IdeaJson.ComputeScore(idea, researchReport, lastResearch?.CreatedAt);
         if (score.Source != "none")
         {
             builder.Append("\n⭐ <b>Score ")
                 .Append((score.Total * 100).ToString("F0", CultureInfo.InvariantCulture))
                 .Append("%</b> — ")
                 .Append(score.Source == "research" ? "from web research" : "skeptic estimate only")
+                .Append(score.AppealAdjusted ? " · ⚖️ <i>appeal-corrected</i>" : string.Empty)
                 .Append(" · confidence ")
                 .Append((score.Confidence * 100).ToString("F0", CultureInfo.InvariantCulture)).Append("%\n");
 
@@ -1860,6 +1879,37 @@ internal sealed class TelegramCommandService(
                 .Append(" · ").Append((lastResearch.Confidence * 100).ToString("F0", CultureInfo.InvariantCulture))
                 .Append("% confident · ").Append(lastResearch.SearchesUsed).Append(" searches · $")
                 .Append(lastResearch.CostUsd.ToString("F3", CultureInfo.InvariantCulture)).Append('\n');
+
+            var ledger = researchReport?.Concerns ?? [];
+            if (ledger.Count > 0)
+            {
+                var fatal = ledger.Count(c => c.Status?.ToLowerInvariant() == "fatal");
+                var openConcerns = ledger.Count(c => c.Status?.ToLowerInvariant() == "open");
+                var mitigated = ledger.Count(c => c.Status?.ToLowerInvariant() == "mitigated");
+                builder.Append("🧾 concerns: ");
+                if (fatal > 0)
+                {
+                    builder.Append("🔥").Append(fatal).Append(" fatal · ");
+                }
+
+                builder.Append("🔓").Append(openConcerns).Append(" open · ✅")
+                    .Append(mitigated).Append(" mitigated\n");
+                foreach (var blocking in ledger
+                    .Where(c => c.Status?.ToLowerInvariant() is "fatal" or "open").Take(3))
+                {
+                    builder.Append(IdeaEngine.Core.Common.Ui.ConcernStatus(blocking.Status)).Append(' ')
+                        .Append(System.Net.WebUtility.HtmlEncode(
+                            IdeaEngine.Core.Common.TextClip.Clip(blocking.Text ?? string.Empty, 160))).Append('\n');
+                }
+            }
+
+            var (cardNoteAt, cardAppealAt) = IdeaEngine.Infrastructure.Ideation.IdeaScores.JudgmentMoments(idea);
+            if (IdeaEngine.Core.Common.Staleness.IsStale(
+                lastResearch.EngineVersion, lastResearch.CreatedAt, cardNoteAt, cardAppealAt))
+            {
+                builder.Append("⌛ <i>research predates newer reasoning or your latest arguments — a re-run would matter · /research ")
+                    .Append(idea.Id).Append("</i>\n");
+            }
 
             var answers = researchReport?.Answers ?? [];
             var answeredCount = answers.Count(a => a.IsAnswered);

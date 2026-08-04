@@ -72,4 +72,13 @@ public static class Ui
         "Idle" => Idle,
         _ => Live,
     };
+
+    /// <summary>Concern-ledger status glyphs: 🔥 fatal · 🔓 open · ✅ mitigated · 🕊 waived.</summary>
+    public static string ConcernStatus(string? status) => status?.Trim().ToLowerInvariant() switch
+    {
+        "fatal" => "🔥",
+        "mitigated" => "✅",
+        "waived" => "🕊",
+        _ => "🔓",
+    };
 }

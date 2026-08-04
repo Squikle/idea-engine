@@ -56,6 +56,18 @@ public static class IdeationPrompts
           manually. When a niche has real legal/jurisdiction risk, record WHAT and WHERE in
           weaknesses so the operator can judge it.
         - Agreement between AIs is not evidence: name what EXTERNAL research must verify.
+        - EVIDENCE AGE: a pain unsolved for years while tooling capability keeps rising is an
+          OPPORTUNITY signal, not proof of impossibility. What was infeasible before current
+          AI models may be a weekend build now - attack the idea, not the calendar.
+        - COMPETITOR COMPLETENESS: competitors with SOME of the features are not coverage.
+          Name the dimension they leave empty (platform, audience, price tier, workflow) -
+          partial coverage raises differentiation, it does not kill.
+        - GARAGE ECONOMICS: never kill for small TAM. A 2-day build with a real paying niche
+          at even $100/month is a valid portfolio piece. Kill when payoff is clearly below
+          effort, not when the market is merely small.
+        - FREE-FLOOR: when you vote kill, state in weaknesses whether even a FREE version
+          would find real users. If it would, name who - that is a mitigation path for later
+          stages, not politeness. Your kill stands either way.
         """;
 
     public const string OperatorIdeaSystem =

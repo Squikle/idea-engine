@@ -33,7 +33,8 @@ public sealed record IdeaScore(
     double Total,
     double Confidence,
     string Source,
-    IReadOnlyDictionary<string, double> Categories)
+    IReadOnlyDictionary<string, double> Categories,
+    bool AppealAdjusted = false)
 {
     public static readonly IdeaScore None = new(0, 0, "none", new Dictionary<string, double>());
 }
@@ -55,8 +56,10 @@ public static class IdeaScoring
         IReadOnlyDictionary<string, double>? skepticScores,
         double skepticConfidence,
         IReadOnlyDictionary<string, double>? researchScores,
-        double researchConfidence)
+        double researchConfidence,
+        IReadOnlyDictionary<string, double>? appealAdjustments = null)
     {
+        var adjusted = false;
         var useResearch = researchScores is { Count: > 0 };
         var source = useResearch ? "research" : skepticScores is { Count: > 0 } ? "skeptic" : "none";
         var confidence = Math.Clamp(useResearch ? researchConfidence : skepticConfidence, 0, 1);
@@ -76,6 +79,13 @@ public static class IdeaScoring
                 value = fromSkeptic;
             }
 
+            // The court of appeal may correct specific misjudged categories (research keys).
+            if (appealAdjustments is not null && appealAdjustments.TryGetValue(researchKey, out var corrected))
+            {
+                value = corrected;
+                adjusted = true;
+            }
+
             if (value is { } present)
             {
                 var clamped = Math.Clamp(present, 0, 1);
@@ -91,7 +101,7 @@ public static class IdeaScoring
         }
 
         var total = Math.Round(sum / weightSum * (0.5 + 0.5 * confidence), 3);
-        return new IdeaScore(total, confidence, source, categories);
+        return new IdeaScore(total, confidence, source, categories, adjusted);
     }
 
     private static readonly (string Key, double Weight)[] Weights =

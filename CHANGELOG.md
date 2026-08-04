@@ -5,6 +5,30 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.29.0 — 2026-08-04
+
+### Added — the distillation engine (Wave 1)
+- **Concern ledger**: research reports now carry first-class concerns, each
+  `open | mitigated | fatal | waived` with a concrete mitigation and who resolved it
+  (evidence / your note / advocate / reasoning). Every re-research MUST re-adjudicate
+  every prior concern by name — dropping one silently is a failed report.
+- **Distillation trajectory** on verdict cards: `⭐ 52% → 58% ↑ · blocking concerns 3 → 1`.
+  Scores move both directions — hardened concerns push down, closed ones push up.
+- **Appeal reform**: the court now corrects misjudged score categories
+  (⚖️ appeal-corrected scores flow into /ideas and /idea), updates concern statuses,
+  and ALWAYS answers "what would move this idea" — 'fair' is no longer a dead end.
+- **⌛ staleness**: ideas whose latest research predates newer reasoning milestones or
+  your latest notes/appeal show ⌛ everywhere + new `stale` filter in /ideas —
+  the "re-run would actually matter" list.
+- **Smarter judgment laws** (the skeptic keeps its roast): competitors VALIDATE demand
+  (fatal only on full overlap + equal-or-lower price + trivial switching; free products
+  still monetize); evidence-age perspective (absence in old results ≠ infeasible in 2026 —
+  newly-possible = the opportunity); garage economics (a 2-day build with a real niche and
+  a small subscription is a valid go — never demand unicorn TAM); the kill floor question:
+  "would a real niche use this even FREE?"
+- Advocate mitigation duty: every skeptic concern gets the cheapest niche-specific fix
+  or an honest concession.
+
 ## 0.28.1 — 2026-08-02
 
 ### Fixed

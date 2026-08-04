@@ -29,8 +29,12 @@ public static class ResearchPrompts
         direction, not truth: NEVER invent evidence.
         Pivot lenses to reach for when they fit:
         {LENSES}
+        MITIGATION DUTY: address EVERY skeptic concern and open question with the cheapest
+        niche-specific mitigation you can construct from the evidence - or concede it honestly;
+        an honest concession beats hand-waving, a unique per-niche fix beats both.
         Reply with ONLY a JSON object:
         {"case_for":"the strongest 3-5 sentence argument","competitor_gaps":["..."],
+         "mitigations":[{"concern":"the skeptic's concern","fix":"cheapest concrete mitigation, or 'conceded: <why>'"}],
          "pivots":[{"name":"...","what":"1-2 sentences","why_it_wins":"..."}],
          "strongest_single_argument":"one sentence"}
         """.Replace("{LENSES}", IdeaEngine.Core.Pipeline.Playbooks.CompactList(), StringComparison.Ordinal);
@@ -51,13 +55,33 @@ public static class ResearchPrompts
          "mvp_test":"the cheapest ~1-week experiment that tests the riskiest assumption",
          "related_variants":["adjacent niches/applications that looked stronger in the results"],
          "next_steps":["concrete first actions if pursued"],
+         "concerns":[{"text":"one concrete concern","status":"open|mitigated|fatal|waived","mitigation":"cheapest niche-specific fix, or why none exists","resolved_by":"evidence|operator|advocate|reasoning or null"}],
          "scores":{"demand":0.0-1.0,"competition_gap":0.0-1.0,"willingness_to_pay":0.0-1.0,"feasibility_solo":0.0-1.0}}
         Rules:
-        - List EVERY distinct competitor present in the results, each with name AND url.
-          Omitting a competitor that appears in the results is a failed report.
-        - "no-go" when a strong incumbent covers the need with no realistic differentiation.
+        - CONCERN LEDGER (the distillation core): every distinct concern - skeptic weaknesses,
+          appeal points, your own findings - appears in "concerns" with a status. When a PRIOR
+          LEDGER is supplied, re-adjudicate EVERY prior concern by name: close it (mitigated/
+          waived), harden it (fatal), or keep it open with what's still missing. Silently
+          dropping a prior concern is a failed report. "mitigated" REQUIRES a concrete
+          mitigation - the best ones are unique to this niche - and resolved_by. "fatal" means
+          real mitigation attempts failed and no plausible fix exists.
+        - Scores move BOTH directions between rounds: hardened concerns push down, closed
+          concerns push up. Never anchor to the previous score.
+        - "no-go" requires at least one fatal concern AND an answer to the floor question:
+          would a real niche use this even FREE? If yes, verdict is "maybe" and the free-first
+          path goes in differentiation_path.
+        - COMPETITORS VALIDATE DEMAND. List EVERY distinct competitor in the results with name
+          AND url - omitting one is a failed report. But competitor-based fatal exists ONLY
+          when incumbents fully cover the idea's core at equal-or-lower price with trivial
+          switching. Partial-feature or pricier competitors = a gap: score competition_gap UP.
+          Free alternatives do not kill monetization (credibility, premium tiers, niche add-ons).
+        - TIME PERSPECTIVE: check evidence dates. "Nothing found" in older content is NOT
+          infeasibility today - AI-capability shifts reopen niches monthly. When something
+          became newly possible, that IS the opportunity: say so in market_notes and score it up.
+        - GARAGE ECONOMICS: payoff vs effort at 1-3 person scale. A days-sized build with a
+          reachable niche and a small subscription is a valid "go" - never demand unicorn TAM.
+          Judge willingness_to_pay against the NICHE's reality, not venture scale.
         - "go" requires BOTH demand evidence AND a reachable gap; otherwise "maybe".
-        - Garage-scale lens: launchable by 1-3 people from an apartment.
         - Right-goal judging: "reputation" category = virality/stars potential, "content" =
           audience growth - not revenue. Absurd/status plays live on shareability.
         - UPSTREAM OPTION: for any idea, consider the shovel-seller variant - exposing the

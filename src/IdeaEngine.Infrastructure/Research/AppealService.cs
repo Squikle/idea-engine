@@ -52,19 +52,33 @@ public sealed class AppealService(
 
     private const string SystemPrompt =
         """
-        You are the court of appeal for startup idea verdicts. You receive an idea, the
-        skeptic's pre-research review, the researcher's evidence-based report, and the
-        operator's notes. Judge the JUDGMENT, not the idea from scratch: was the verdict
-        justified by the evidence shown? Was anything important ignored, misweighed, or
-        asserted without evidence? Reply with ONLY a JSON object:
-        {"assessment":"fair|shallow|unfair","missed":["important points the verdict ignored"],
-         "overturn":null,"new_verdict":"go|maybe|no-go or null when upholding",
+        You are the court of appeal for startup idea verdicts, and a working part of a
+        DISTILLATION process: every pass must leave the idea sharper, never just stamped.
+        You receive an idea, the skeptic's pre-research review, the researcher's report
+        with its concern ledger (when research ran), and the operator's notes.
+        Judge the JUDGMENT: was the verdict AND scoring justified by the evidence shown?
+        Reply with ONLY a JSON object:
+        {"assessment":"fair|shallow|unfair",
+         "missed":["important points the verdict ignored"],
+         "new_verdict":"go|maybe|no-go, or null when the verdict category stands",
+         "score_adjustments":{"demand":0.55} or null - ONLY categories you are confident were
+          misjudged given the evidence (keys: demand, willingness_to_pay, feasibility_solo,
+          competition_gap), with corrected values,
+         "concern_updates":[{"concern":"quote it","new_status":"open|mitigated|fatal|waived","reason":"..."}],
+         "what_would_move_it":"REQUIRED ALWAYS: the cheapest concrete action or evidence that
+          would raise this idea - or exactly 'nothing: <why it is hopeless>'",
          "justification":"2-4 sentences, concrete","confidence":0.0-1.0}
         Rules:
         - Uphold verdicts that are evidence-grounded even if debatable; overturn only for
           clear misjudgment (ignored evidence, wrong-goal judging, unsupported fatal flaw).
+        - "fair" is NOT a dead end. Even when upholding, adjust misjudged score categories
+          (cite the evidence in justification) and update concern statuses the judge got
+          wrong - especially concerns the operator's notes or advocate's mitigations resolved.
+        - what_would_move_it is the distillation engine: be concrete (an experiment, a pivot,
+          a piece of evidence, a niche switch). Only say 'nothing: ...' when genuinely hopeless.
         - Garage-scale lens applies (1-3 people). Do not moralize; edgy niches are valid.
         - Reputation/content-category ideas are judged on audience/virality, not revenue.
+        - A small niche with real willingness to pay beats a huge market with none.
         """;
 
     public async Task<AppealResult> RunAsync(long ideaId, CancellationToken cancellationToken)
@@ -155,7 +169,7 @@ public sealed class AppealService(
         if (verdict is null)
         {
             await db.SaveChangesAsync(cancellationToken);
-            return new AppealResult(string.Empty, null, cost, "appeal output unparseable");
+            return new AppealResult(string.Empty, null, cost, $"appeal failed — {LlmDiag.Describe(completion)}");
         }
 
         string? newStatus = null;
@@ -175,7 +189,12 @@ public sealed class AppealService(
             idea.Verified = false; // overturned ideas return to the review inbox
         }
 
-        idea.AppealJson = JsonSerializer.Serialize(verdict, LlmJson.Options);
+        // Persist with timestamp + engine version: staleness detection and the
+        // research context loop both need to know WHEN the court last spoke.
+        var appealNode = JsonSerializer.SerializeToNode(verdict, LlmJson.Options)!.AsObject();
+        appealNode["at"] = timeProvider.GetUtcNow().ToString("O");
+        appealNode["engine"] = typeof(AppealService).Assembly.GetName().Version?.ToString(3);
+        idea.AppealJson = appealNode.ToJsonString(LlmJson.Options);
         await db.SaveChangesAsync(cancellationToken);
 
         logger.LogInformation(
@@ -197,9 +216,28 @@ public sealed class AppealService(
             html.Append("• ").Append(WebUtility.HtmlEncode(missed)).Append('\n');
         }
 
+        if (verdict.ScoreAdjustments is { Count: > 0 } adjustments)
+        {
+            html.Append("📐 <b>Scores corrected:</b> ").Append(string.Join(" · ",
+                adjustments.Select(a => $"{a.Key} → {(a.Value * 100):F0}%"))).Append('\n');
+        }
+
+        foreach (var update in verdict.ConcernUpdates ?? [])
+        {
+            html.Append("🧾 ").Append(Ui.ConcernStatus(update.NewStatus)).Append(' ')
+                .Append(WebUtility.HtmlEncode(update.Concern ?? string.Empty))
+                .Append(" — <i>").Append(WebUtility.HtmlEncode(update.Reason ?? string.Empty)).Append("</i>\n");
+        }
+
         if (verdict.Justification is { Length: > 0 })
         {
             html.Append("<i>").Append(WebUtility.HtmlEncode(verdict.Justification)).Append("</i>\n");
+        }
+
+        if (verdict.WhatWouldMoveIt is { Length: > 0 })
+        {
+            html.Append("🧭 <b>What would move it:</b> ")
+                .Append(WebUtility.HtmlEncode(verdict.WhatWouldMoveIt)).Append('\n');
         }
 
         html.Append(Ui.Spend).Append(" $").Append(cost.ToString("F3", CultureInfo.InvariantCulture))
@@ -212,6 +250,14 @@ public sealed class AppealService(
         [property: JsonPropertyName("assessment")] string? Assessment,
         [property: JsonPropertyName("missed")] IReadOnlyList<string>? Missed,
         [property: JsonPropertyName("new_verdict")] string? NewVerdict,
+        [property: JsonPropertyName("score_adjustments")] Dictionary<string, double>? ScoreAdjustments,
+        [property: JsonPropertyName("concern_updates")] IReadOnlyList<ConcernUpdateDto>? ConcernUpdates,
+        [property: JsonPropertyName("what_would_move_it")] string? WhatWouldMoveIt,
         [property: JsonPropertyName("justification")] string? Justification,
         [property: JsonPropertyName("confidence")] double Confidence);
+
+    private sealed record ConcernUpdateDto(
+        [property: JsonPropertyName("concern")] string? Concern,
+        [property: JsonPropertyName("new_status")] string? NewStatus,
+        [property: JsonPropertyName("reason")] string? Reason);
 }

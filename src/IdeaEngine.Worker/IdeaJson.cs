@@ -14,6 +14,9 @@ internal static class IdeaJson
     public static IdeaScore ComputeScore(IdeaEntity idea, ResearchReportDto? research) =>
         IdeaScores.Compute(idea, research);
 
+    public static IdeaScore ComputeScore(IdeaEntity idea, ResearchReportDto? research, DateTimeOffset? reportAt) =>
+        IdeaScores.Compute(idea, research, reportAt);
+
     public static double ComputeRating(IdeaEntity idea) => IdeaScores.Rating(idea);
 
     public static List<long> ParseEvidence(string? evidenceJson) =>

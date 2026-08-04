@@ -17,7 +17,18 @@ public sealed record ResearchReportDto(
     [property: JsonPropertyName("mvp_test")] string? MvpTest,
     [property: JsonPropertyName("related_variants")] IReadOnlyList<string>? RelatedVariants,
     [property: JsonPropertyName("next_steps")] IReadOnlyList<string>? NextSteps,
-    [property: JsonPropertyName("scores")] Dictionary<string, double>? Scores);
+    [property: JsonPropertyName("scores")] Dictionary<string, double>? Scores,
+    [property: JsonPropertyName("concerns")] IReadOnlyList<ConcernDto>? Concerns);
+
+/// <summary>
+/// One entry of the concern ledger - the distillation unit. Concerns are carried across
+/// research rounds by name and must be re-adjudicated every round: closed, hardened or kept.
+/// </summary>
+public sealed record ConcernDto(
+    [property: JsonPropertyName("text")] string? Text,
+    [property: JsonPropertyName("status")] string? Status,
+    [property: JsonPropertyName("mitigation")] string? Mitigation,
+    [property: JsonPropertyName("resolved_by")] string? ResolvedBy);
 
 public sealed record CompetitorDto(
     [property: JsonPropertyName("name")] string? Name,

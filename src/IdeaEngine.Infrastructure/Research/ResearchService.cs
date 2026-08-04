@@ -77,9 +77,10 @@ public sealed class ResearchService(
         var openQuestions = (skeptic?.ResearchQuestions ?? []).Take(6).ToList();
         var evidence = await LoadEvidenceSummariesAsync(idea, cancellationToken);
 
-        var ideaContext = ResearchPrompts.BuildIdeaContext(
-            idea.Title, idea.Thesis, idea.Category, idea.TargetUser, idea.Monetization,
-            idea.EffortScale, openQuestions, evidence);
+        var ideaContext = $"Today's date: {timeProvider.GetUtcNow():yyyy-MM-dd}. Weigh evidence age accordingly.\n"
+            + ResearchPrompts.BuildIdeaContext(
+                idea.Title, idea.Thesis, idea.Category, idea.TargetUser, idea.Monetization,
+                idea.EffortScale, openQuestions, evidence);
 
         var variants = SafeDeserialize<List<string>>(idea.VariantsJson);
         if (variants is { Count: > 0 })
@@ -91,9 +92,11 @@ public sealed class ResearchService(
             .Where(r => r.IdeaId == idea.Id)
             .OrderByDescending(r => r.Id)
             .FirstOrDefaultAsync(cancellationToken);
+        ResearchReportDto? previousDtoForTrajectory = null;
         if (previousReport is not null)
         {
             var previousDto = LlmJson.SafeDeserialize<ResearchReportDto>(previousReport.ReportJson);
+            previousDtoForTrajectory = previousDto;
             var stillOpen = previousDto is null ? [] : UnansweredQuestions(previousDto, []);
             var missedUpgrades = ReasoningMilestones.MissedSince(previousReport.EngineVersion);
 
@@ -110,6 +113,15 @@ public sealed class ResearchService(
             {
                 ideaContext += "Reasoning upgrades since that verdict (apply them now):\n"
                     + string.Join('\n', missedUpgrades.Select(m => "- " + m.Summary)) + "\n";
+            }
+
+            if (previousDto?.Concerns is { Count: > 0 } priorConcerns)
+            {
+                ideaContext += "PRIOR CONCERN LEDGER - re-adjudicate EVERY item by name this round "
+                    + "(close, harden, or keep open; dropping one silently is a failed report):\n"
+                    + string.Join('\n', priorConcerns.Select(c =>
+                        $"- [{c.Status}] {c.Text}" + (c.Mitigation is { Length: > 0 } m ? $" (mitigation so far: {m})" : string.Empty)))
+                    + "\n";
             }
         }
 
@@ -325,8 +337,20 @@ public sealed class ResearchService(
             report.Scores,
             report.Confidence);
 
+        // Distillation trajectory: where was this idea before this round?
+        (double Total, double Confidence, int Open)? previousState = null;
+        if (previousDtoForTrajectory is { } prevDto && previousReport is not null)
+        {
+            var prevUnified = IdeaScoring.Compute(
+                SafeDeserialize<Dictionary<string, double>>(idea.ScoresJson),
+                skeptic?.Confidence ?? 0,
+                prevDto.Scores,
+                previousReport.Confidence);
+            previousState = (prevUnified.Total, previousReport.Confidence, CountBlocking(prevDto.Concerns));
+        }
+
         return new ResearchRunResult(
-            FormatReport(idea, verdict, report, openQuestions, cost, searchesUsed, rounds, pagesRead, unified),
+            FormatReport(idea, verdict, report, openQuestions, cost, searchesUsed, rounds, pagesRead, unified, previousState),
             verdict, cost, searchesUsed, null, idea.Id, unified.Total, Math.Clamp(report.Confidence, 0, 1));
     }
 
@@ -529,6 +553,9 @@ public sealed class ResearchService(
         return cost;
     }
 
+    private static int CountBlocking(IReadOnlyList<ConcernDto>? concerns) =>
+        (concerns ?? []).Count(c => c.Status?.ToLowerInvariant() is "open" or "fatal");
+
     private static string FormatReport(
         IdeaEntity idea,
         string verdict,
@@ -538,7 +565,8 @@ public sealed class ResearchService(
         int searches,
         int rounds,
         int pagesRead,
-        IdeaScore unified)
+        IdeaScore unified,
+        (double Total, double Confidence, int Open)? previous = null)
     {
         var builder = new StringBuilder();
         builder.Append(Ui.Research).Append(" <b>Research #").Append(idea.Id).Append(" · ")
@@ -548,6 +576,41 @@ public sealed class ResearchService(
             .Append("%</b> <i>(opportunity strength)</i> · evidence ")
             .Append((report.Confidence * 100).ToString("F0", CultureInfo.InvariantCulture))
             .Append("% <i>(research solidity)</i>\n");
+
+        if (previous is { } prev)
+        {
+            var nowBlocking = CountBlocking(report.Concerns);
+            var arrow = unified.Total > prev.Total + 0.005 ? "↑" : unified.Total < prev.Total - 0.005 ? "↓" : "→";
+            builder.Append("📈 <b>Distillation:</b> ⭐ ")
+                .Append((prev.Total * 100).ToString("F0", CultureInfo.InvariantCulture)).Append("% ")
+                .Append(arrow).Append(' ')
+                .Append((unified.Total * 100).ToString("F0", CultureInfo.InvariantCulture))
+                .Append("% · blocking concerns ").Append(prev.Open).Append(" → ").Append(nowBlocking).Append('\n');
+        }
+
+        var concerns = (report.Concerns ?? []).ToList();
+        if (concerns.Count > 0)
+        {
+            builder.Append("\n<b>🧾 Concern ledger</b>\n");
+            foreach (var concern in concerns
+                .OrderBy(c => c.Status?.ToLowerInvariant() switch { "fatal" => 0, "open" => 1, "mitigated" => 2, _ => 3 }))
+            {
+                builder.Append(Ui.ConcernStatus(concern.Status)).Append(' ')
+                    .Append(WebUtility.HtmlEncode(concern.Text ?? string.Empty));
+                if (concern.Mitigation is { Length: > 0 } mitigation)
+                {
+                    builder.Append(" — <i>").Append(WebUtility.HtmlEncode(mitigation));
+                    if (concern.ResolvedBy is { Length: > 0 } by)
+                    {
+                        builder.Append(" (").Append(WebUtility.HtmlEncode(by)).Append(')');
+                    }
+
+                    builder.Append("</i>");
+                }
+
+                builder.Append('\n');
+            }
+        }
 
         var competitors = (report.Competitors ?? []).Take(8).ToList();
         if (competitors.Count > 0)
