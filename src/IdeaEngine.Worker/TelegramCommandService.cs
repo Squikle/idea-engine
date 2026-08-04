@@ -116,6 +116,8 @@ internal sealed class TelegramCommandService(
                 new BotCommand { Command = "partner", Description = "your right-hand's blunt take on an idea" },
                 new BotCommand { Command = "origin", Description = "your original pitch + the idea at its best" },
                 new BotCommand { Command = "models", Description = "see or swap the model behind each stage" },
+                new BotCommand { Command = "mine", Description = "mine AI memory for pains (reply to dig deeper)" },
+                new BotCommand { Command = "chat", Description = "talk to your right hand (or just type without /)" },
                 new BotCommand { Command = "bump", Description = "+$5 to today's AI caps" },
                 new BotCommand { Command = "kill", Description = "your verdict: dismiss an idea" },
                 new BotCommand { Command = "promote", Description = "your verdict: mark an idea hot" },
@@ -155,6 +157,21 @@ internal sealed class TelegramCommandService(
 
         if (update.Message is not { Text: { } text } message || message.Chat.Id != _adminChatId)
         {
+            return;
+        }
+
+        // Replying to a MINE card continues that excavation; any other plain text is a
+        // conversation with the right hand. Slash = commands, as always.
+        if (!text.StartsWith('/'))
+        {
+            if (update.Message.ReplyToMessage?.Text is { } repliedText
+                && repliedText.StartsWith("⛏ MINE", StringComparison.Ordinal))
+            {
+                StartMine(text.Trim(), continuation: true);
+                return;
+            }
+
+            await HandleHandMessageAsync(text.Trim(), cancellationToken);
             return;
         }
 
@@ -198,6 +215,8 @@ internal sealed class TelegramCommandService(
                 "partner" => StartPartner(argument),
                 "origin" => await BuildOriginAsync(argument, cancellationToken),
                 "models" => await HandleModelsAsync(argument, cancellationToken),
+                "mine" => HandleMineCommand(argument),
+                "chat" => await HandleChatCommandAsync(argument, cancellationToken),
                 "bump" => await BumpBudgetAsync(cancellationToken),
                 "promote" => await SetIdeaStatusAsync(argument, "hot", cancellationToken),
                 "advise" => StartAdvise(),
@@ -915,6 +934,42 @@ internal sealed class TelegramCommandService(
                 StartPartner(parts[1]);
                 await _bot!.AnswerCallbackQuery(
                     callback.Id, $"🤝 partner reading #{partnerCbId}…", cancellationToken: cancellationToken);
+                return;
+            }
+
+            if (parts.Length >= 2 && parts[0] == "hand")
+            {
+                if (parts[1] == "apply")
+                {
+                    var outcome = await ExecuteHandWritesAsync(cancellationToken);
+                    await _bot!.EditMessageText(
+                        chatId: _adminChatId,
+                        messageId: message.MessageId,
+                        text: "🫱 <b>Applied</b>\n" + outcome,
+                        parseMode: ParseMode.Html,
+                        linkPreviewOptions: Telegram.Bot.Types.LinkPreviewOptions.Disabled,
+                        cancellationToken: cancellationToken);
+                }
+                else
+                {
+                    using var handScope = scopeFactory.CreateScope();
+                    var handDb = handScope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
+                    var pendingRow = await handDb.AppState.FindAsync(["hand.pending"], cancellationToken);
+                    if (pendingRow is not null)
+                    {
+                        handDb.AppState.Remove(pendingRow);
+                        await handDb.SaveChangesAsync(cancellationToken);
+                    }
+
+                    await _bot!.EditMessageText(
+                        chatId: _adminChatId,
+                        messageId: message.MessageId,
+                        text: "🫱 proposals discarded — nothing changed.",
+                        linkPreviewOptions: Telegram.Bot.Types.LinkPreviewOptions.Disabled,
+                        cancellationToken: cancellationToken);
+                }
+
+                await _bot!.AnswerCallbackQuery(callback.Id, cancellationToken: cancellationToken);
                 return;
             }
 
@@ -1870,6 +1925,345 @@ internal sealed class TelegramCommandService(
         return string.Empty;
     }
 
+    // ---------------- Right hand: chat over the database, code executes ----------------
+
+    private async Task<string> HandleChatCommandAsync(string? argument, CancellationToken cancellationToken)
+    {
+        var text = argument?.Trim();
+        if (string.Equals(text, "end", StringComparison.OrdinalIgnoreCase))
+        {
+            using var scope = scopeFactory.CreateScope();
+            await scope.ServiceProvider.GetRequiredService<IdeaEngine.Infrastructure.Hand.HandService>()
+                .ClearSessionAsync(cancellationToken);
+            return "🫱 session cleared — next message starts fresh.";
+        }
+
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return "🫱 Just type without / to talk to your right hand about anything in the database.\n" +
+                "It reads whatever it needs; changes only happen after you approve the audit card.\n" +
+                "/chat end — forget the current conversation.";
+        }
+
+        await HandleHandMessageAsync(text, cancellationToken);
+        return string.Empty;
+    }
+
+    private async Task HandleHandMessageAsync(string text, CancellationToken cancellationToken)
+    {
+        await _bot!.SendChatAction(_adminChatId, Telegram.Bot.Types.Enums.ChatAction.Typing, cancellationToken: cancellationToken);
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var hand = scope.ServiceProvider.GetRequiredService<IdeaEngine.Infrastructure.Hand.HandService>();
+            var turn = await hand.TurnAsync(text, cancellationToken);
+            if (turn.StoppedReason is { } reason)
+            {
+                await ReplyAsync($"🫱 ⛔ {reason}", cancellationToken);
+                return;
+            }
+
+            if (turn.Say.Length > 0)
+            {
+                await ReplyAsync("🫱 " + System.Net.WebUtility.HtmlEncode(turn.Say), cancellationToken);
+            }
+
+            if (turn.Writes.Count > 0)
+            {
+                var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
+                var pendingJson = System.Text.Json.JsonSerializer.Serialize(turn.Writes, LlmJson.Options);
+                var state = await db.AppState.FindAsync(["hand.pending"], cancellationToken);
+                if (state is null)
+                {
+                    db.AppState.Add(new IdeaEngine.Infrastructure.Persistence.Entities.AppStateEntity
+                    {
+                        Key = "hand.pending",
+                        Value = pendingJson,
+                        UpdatedAt = timeProvider.GetUtcNow(),
+                    });
+                }
+                else
+                {
+                    state.Value = pendingJson;
+                    state.UpdatedAt = timeProvider.GetUtcNow();
+                }
+
+                await db.SaveChangesAsync(cancellationToken);
+
+                var audit = new StringBuilder("🫱 <b>Proposed changes</b> — nothing happens until you approve:\n");
+                var n = 1;
+                foreach (var write in turn.Writes)
+                {
+                    audit.Append(n++).Append(". ")
+                        .Append(System.Net.WebUtility.HtmlEncode(IdeaEngine.Infrastructure.Hand.HandService.Describe(write)))
+                        .Append('\n');
+                }
+
+                await _bot!.SendMessage(
+                    chatId: _adminChatId,
+                    text: audit.ToString(),
+                    parseMode: ParseMode.Html,
+                    replyMarkup: new Telegram.Bot.Types.ReplyMarkups.InlineKeyboardMarkup(
+                    [
+                        [
+                            Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton.WithCallbackData("✅ Apply", "hand|apply"),
+                            Telegram.Bot.Types.ReplyMarkups.InlineKeyboardButton.WithCallbackData("❌ Cancel", "hand|cancel"),
+                        ],
+                    ]),
+                    linkPreviewOptions: Telegram.Bot.Types.LinkPreviewOptions.Disabled,
+                    cancellationToken: cancellationToken);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogError(ex, "Hand message failed");
+            await ReplyAsync("🫱 crashed — check logs.", cancellationToken);
+        }
+    }
+
+    /// <summary>CODE executes approved writes - the brain never touches data (owner's law).</summary>
+    private async Task<string> ExecuteHandWritesAsync(CancellationToken cancellationToken)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
+        var pending = await db.AppState.FindAsync(["hand.pending"], cancellationToken);
+        if (pending is null)
+        {
+            return "nothing pending (already applied or cancelled)";
+        }
+
+        var writes = IdeaJson.SafeDeserialize<List<IdeaEngine.Infrastructure.Hand.HandWrite>>(pending.Value) ?? [];
+        db.AppState.Remove(pending);
+        await db.SaveChangesAsync(cancellationToken);
+
+        var results = new StringBuilder();
+        foreach (var write in writes)
+        {
+            try
+            {
+                results.Append(await ExecuteOneWriteAsync(scope.ServiceProvider, write, cancellationToken)).Append('\n');
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogError(ex, "Hand write {Action} failed", write.Action);
+                results.Append("⛔ ").Append(write.Action).Append(" crashed: ").Append(ex.GetType().Name).Append('\n');
+            }
+        }
+
+        return results.ToString().TrimEnd();
+    }
+
+    private async Task<string> ExecuteOneWriteAsync(
+        IServiceProvider services, IdeaEngine.Infrastructure.Hand.HandWrite write, CancellationToken cancellationToken)
+    {
+        var db = services.GetRequiredService<IdeaEngineDbContext>();
+        switch (write.Action)
+        {
+            case "set_status" when write.Id is { } id && write.Status is "dismissed" or "hot" or "candidate" or "uncertain":
+            {
+                var idea = await db.Ideas.FindAsync([id], cancellationToken);
+                if (idea is null)
+                {
+                    return $"⛔ #{id} not found";
+                }
+
+                var old = idea.Status;
+                idea.Status = write.Status;
+                await db.SaveChangesAsync(cancellationToken);
+                return $"✅ #{id}: {old} → {write.Status}";
+            }
+
+            case "add_note" when write.Id is { } noteId && write.Text is { Length: > 0 }:
+            {
+                var idea = await db.Ideas.FindAsync([noteId], cancellationToken);
+                if (idea is null)
+                {
+                    return $"⛔ #{noteId} not found";
+                }
+
+                var notes = IdeaJson.SafeDeserialize<List<Dictionary<string, object>>>(idea.NotesJson) ?? [];
+                notes.Add(new Dictionary<string, object>
+                {
+                    ["text"] = "🫱 " + write.Text.Trim(),
+                    ["at"] = timeProvider.GetUtcNow(),
+                });
+                idea.NotesJson = System.Text.Json.JsonSerializer.Serialize(notes, LlmJson.Options);
+                await db.SaveChangesAsync(cancellationToken);
+                return $"✅ note added to #{noteId}";
+            }
+
+            case "queue_research":
+            {
+                var ids = (write.Ids ?? (write.Id is { } single ? [single] : new List<long>())).Take(10).ToList();
+                if (ids.Count == 0)
+                {
+                    return "⛔ queue_research without ids";
+                }
+
+                var jobs = services.GetRequiredService<JobService>();
+                foreach (var researchId in ids)
+                {
+                    await jobs.EnqueueAsync("research", new ResearchJobPayload(researchId), null, cancellationToken);
+                }
+
+                return $"✅ research queued for {string.Join(", ", ids.Select(i => $"#{i}"))} — /queue";
+            }
+
+            case "run_appeal" when write.Id is { } appealId:
+                StartAppeal(appealId.ToString(CultureInfo.InvariantCulture));
+                return $"✅ appeal started on #{appealId}";
+
+            case "run_partner" when write.Id is { } partnerId:
+                StartPartner(partnerId.ToString(CultureInfo.InvariantCulture));
+                return $"✅ partner started on #{partnerId}";
+
+            case "set_model" when write.Stage is { Length: > 0 } && write.Model is { Length: > 0 }:
+            {
+                if (!ModelStages.Any(s => s.Stage == write.Stage))
+                {
+                    return $"⛔ unknown stage '{write.Stage}'";
+                }
+
+                var chat = services.GetRequiredService<IdeaEngine.Infrastructure.Ai.OpenRouterChatClient>();
+                var ping = await chat.CompleteAsync(write.Model, "Reply with OK.", "ping", 16, "low", cancellationToken);
+                if (ping is null || ping.IsError)
+                {
+                    return $"⛔ {write.Model} failed the live ping — not set";
+                }
+
+                if (!IdeaEngine.Infrastructure.Ai.ModelRegistry.KnownPrices.ContainsKey(write.Model))
+                {
+                    return $"⛔ unknown prices for {write.Model} — set via /models set {write.Stage} {write.Model} <$in> <$out>";
+                }
+
+                await services.GetRequiredService<IdeaEngine.Infrastructure.Ai.ModelRegistry>()
+                    .SetAsync(write.Stage, write.Model, null, null, cancellationToken);
+                return $"✅ {write.Stage} → {write.Model}";
+            }
+
+            case "set_setting" when write.Key is "sessions_per_day" or "auto_research_top" or "min_rating_for_research"
+                && write.Value is { Length: > 0 }:
+            {
+                if (write.Key == "min_rating_for_research"
+                    ? !double.TryParse(write.Value, NumberStyles.Any, CultureInfo.InvariantCulture, out _)
+                    : !int.TryParse(write.Value, out _))
+                {
+                    return $"⛔ {write.Key}: '{write.Value}' is not a number";
+                }
+
+                var key = "setting." + write.Key;
+                var state = await db.AppState.FindAsync([key], cancellationToken);
+                if (state is null)
+                {
+                    db.AppState.Add(new IdeaEngine.Infrastructure.Persistence.Entities.AppStateEntity
+                    {
+                        Key = key,
+                        Value = write.Value,
+                        UpdatedAt = timeProvider.GetUtcNow(),
+                    });
+                }
+                else
+                {
+                    state.Value = write.Value;
+                    state.UpdatedAt = timeProvider.GetUtcNow();
+                }
+
+                await db.SaveChangesAsync(cancellationToken);
+                return $"✅ {write.Key} = {write.Value} (live from the next autopilot run)";
+            }
+
+            default:
+                return $"⏭ skipped unsupported/incomplete action '{write.Action}'";
+        }
+    }
+
+    // ---------------- MINE: AI memory as a source ----------------
+
+    private string HandleMineCommand(string? argument)
+    {
+        var arg = argument?.Trim();
+        if (string.Equals(arg, "list", StringComparison.OrdinalIgnoreCase))
+        {
+            var list = new StringBuilder("<b>⛏ Mine angles</b> — /mine rotates them; /mine &lt;your text&gt; digs YOUR fantasy:\n\n");
+            foreach (var (key, prompt) in IdeaEngine.Infrastructure.Mine.MineService.Angles)
+            {
+                list.Append("• <b>").Append(key).Append("</b> — <i>")
+                    .Append(System.Net.WebUtility.HtmlEncode(prompt)).Append("</i>\n");
+            }
+
+            list.Append("\nreply to any MINE card to keep digging that thread");
+            return list.ToString();
+        }
+
+        StartMine(string.IsNullOrWhiteSpace(arg) ? null : arg, continuation: false);
+        return "⛏ mining…";
+    }
+
+    private void StartMine(string? seed, bool continuation)
+    {
+        _ = Task.Run(
+            async () =>
+            {
+                try
+                {
+                    using var scope = scopeFactory.CreateScope();
+                    var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
+
+                    List<(string Role, string Content)>? history = null;
+                    if (continuation)
+                    {
+                        var session = await db.AppState.FindAsync(["mine.session"], CancellationToken.None);
+                        var lines = session is null
+                            ? []
+                            : IdeaJson.SafeDeserialize<List<Dictionary<string, string>>>(session.Value) ?? [];
+                        history = [.. lines.Select(l => (l.GetValueOrDefault("role", "operator"), l.GetValueOrDefault("content", string.Empty)))];
+                    }
+
+                    var mine = scope.ServiceProvider.GetRequiredService<IdeaEngine.Infrastructure.Mine.MineService>();
+                    var result = await mine.RunAsync(seed, history, CancellationToken.None);
+                    if (result.StoppedReason is { } reason)
+                    {
+                        await notifier.SendAsync($"⛏ mine ⛔ {reason}", CancellationToken.None);
+                        return;
+                    }
+
+                    await notifier.SendAsync(result.Html, CancellationToken.None);
+
+                    // Session memory for reply-continuations (last 10 lines).
+                    var updated = (history ?? [])
+                        .Append(("operator", seed ?? "(rotated angle)"))
+                        .Append(("mine", System.Text.RegularExpressions.Regex.Replace(result.Html, "<[^>]+>", string.Empty)))
+                        .TakeLast(10)
+                        .Select(l => new Dictionary<string, string> { ["role"] = l.Item1, ["content"] = IdeaEngine.Core.Common.TextClip.Clip(l.Item2, 1200) })
+                        .ToList();
+                    var stateRow = await db.AppState.FindAsync(["mine.session"], CancellationToken.None);
+                    var json = System.Text.Json.JsonSerializer.Serialize(updated, LlmJson.Options);
+                    if (stateRow is null)
+                    {
+                        db.AppState.Add(new IdeaEngine.Infrastructure.Persistence.Entities.AppStateEntity
+                        {
+                            Key = "mine.session",
+                            Value = json,
+                            UpdatedAt = timeProvider.GetUtcNow(),
+                        });
+                    }
+                    else
+                    {
+                        stateRow.Value = json;
+                        stateRow.UpdatedAt = timeProvider.GetUtcNow();
+                    }
+
+                    await db.SaveChangesAsync(CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Mine run failed");
+                    await notifier.SendAsync("⛏ mine crashed — check logs.", CancellationToken.None);
+                }
+            },
+            CancellationToken.None);
+    }
+
     /// <summary>The idea at its best: verbatim pitch + every argument IN FAVOR. No concern walls.</summary>
     private async Task<string> BuildOriginAsync(string? argument, CancellationToken cancellationToken)
     {
@@ -2397,6 +2791,9 @@ internal sealed class TelegramCommandService(
         /partner 5 — your right-hand's blunt take (worth your weekend or not)
         /origin 5 — your verbatim pitch + the idea at its best (no concern walls)
         /models — see/swap the model behind each stage (live-ping validated)
+        /mine [text|list] — dig AI memory for pains; reply to a MINE card to go deeper
+        just type (no /) — talk to your right hand: it reads ANYTHING in the db, proposes
+        changes, and nothing applies until you tap ✅ on the audit card · /chat end resets
         tap-friendly: hints are emitted like /idea5 — both /idea 5 and /idea5 work
         /advise — AI reviews the pipeline itself
 

@@ -29,4 +29,7 @@ public enum SourceKind
 
     /// <summary>Reserved for the phone capture rig (docs/PHONE-RIG.md). Do not reuse.</summary>
     PhoneRig = 14,
+
+    /// <summary>/mine — pains mined from a model's trained knowledge (not the live web).</summary>
+    AiMine = 15,
 }

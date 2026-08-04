@@ -61,6 +61,8 @@ public static class ServiceCollectionExtensions
         services.Configure<Research.ResearchOptions>(configuration.GetSection("IdeaEngine:Ai:Research"));
         services.Configure<Research.AppealOptions>(configuration.GetSection("IdeaEngine:Ai:Appeal"));
         services.Configure<Research.PartnerOptions>(configuration.GetSection("IdeaEngine:Ai:Partner"));
+        services.Configure<Mine.MineOptions>(configuration.GetSection("IdeaEngine:Ai:Mine"));
+        services.Configure<Hand.HandOptions>(configuration.GetSection("IdeaEngine:Ai:Hand"));
         services.Configure<Research.DigOptions>(configuration.GetSection("IdeaEngine:Ai:Dig"));
 
         // LLM calls run far longer than the 10s default attempt timeout.
@@ -104,6 +106,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<Research.ResearchService>();
         services.AddScoped<Research.AppealService>();
         services.AddScoped<Research.PartnerService>();
+        services.AddScoped<Mine.MineService>();
+        services.AddScoped<Hand.HandService>();
         services.AddScoped<Research.DigService>();
         services.AddScoped<Maintenance.AuditService>();
         services.AddScoped<Maintenance.ReevalService>();

@@ -13,7 +13,7 @@ public sealed class AutopilotOptions
     public string IdeationTime { get; set; } = "10:00";
 
     /// <summary>Builder-vs-skeptic sessions per scheduled run.</summary>
-    public int SessionsPerDay { get; set; } = 3;
+    public int SessionsPerDay { get; set; } = 5;
 
     /// <summary>Max research jobs auto-queued per scheduled run. Every candidate above the
     /// floor gets its own job - opportunities are judged individually, never as a tournament.</summary>
@@ -25,4 +25,7 @@ public sealed class AutopilotOptions
 
     /// <summary>Daily digest, local time (default 21:00 Ontario).</summary>
     public string DigestTime { get; set; } = "21:00";
+
+    /// <summary>Daily /mine auto-run, local time (rotating angles).</summary>
+    public string MineTime { get; set; } = "13:30";
 }

@@ -5,6 +5,28 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.31.0 — 2026-08-04
+
+### Added — right hand, mine, throughput (Wave 3)
+- **Right-hand chat**: just type without / — it converses about ANYTHING in the database
+  (reads ideas/reports/signals/models on its own, up to 4 lookups per turn) and proposes
+  changes: statuses, notes, research queues, appeals, partner runs, model swaps, autopilot
+  settings. **AI is the brain, code is the only executor**: every write becomes an audit
+  card and nothing happens until you tap ✅ Apply. Score edits are excluded by design —
+  scores are earned; the hand proposes an appeal instead. /chat end resets the session.
+- **/mine — AI as a source**: mines the model's trained memory (years of forums, reviews,
+  books) for concrete pains through 10 named rotating angles (/mine list) or your free-text
+  fantasy (/mine what do lego builders struggle with). Pains land as signals feeding normal
+  ideation (SourceKind 15, anchored raw item). **Reply to a MINE card to keep digging.**
+  Auto-runs daily at 13:30 with angle rotation.
+- **Throughput**: ideation 3 → 5 sessions/day; fresh AI-origin skeptic kills with rating
+  ≥45% get an automatic appeal (max 3/run) — the 13-of-17 silent graveyard ends.
+- **Runtime settings**: sessions_per_day, auto_research_top, min_rating_for_research
+  adjustable through the right hand (audit-gated), no restarts.
+- `docs/COMPETITORS.md`: honest scan — GummySearch (closest sourcing rival) closed 11/2025;
+  ValidatorAI/DimeADozen are single-shot with no iteration; our compounding zone
+  (continuous sourcing + iterative judgment + owner memory) is empty. Worth continuing.
+
 ## 0.30.0 — 2026-08-04
 
 ### Added — the partner seat (Wave 2)

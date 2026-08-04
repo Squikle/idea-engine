@@ -5,12 +5,12 @@
 > [RUNBOOK.md](RUNBOOK.md) (how to run things). Keep this file terse and current —
 > updating it is part of every phase's definition of done.
 
-## Where the project actually is (2026-08-02, v0.27.0)
+## Where the project actually is (2026-08-04, v0.31.0)
 
 The phased plan below became reality faster than the phases: the full loop ships.
 
-**Shipped:** 8 live sources (HN, RedditRSS+archaeology, 4chan, Lemmy, Bluesky, YouTube
-search + once-daily Shorts complaint-mining, GDELT news;
+**Shipped:** 9 sources (HN, RedditRSS+archaeology, 4chan, Lemmy, Bluesky, YouTube
+search + Shorts complaint-mining, GDELT news, /mine AI-memory mining;
 Etsy/Pinterest/Reddit-OAuth pending third-party approvals) → triage (nano, budget-capped)
 → signals with glance lines → ideation (builder+skeptic, 13 playbook lenses, long-tail
 signal blending) → durable jobs (/drop /research /dig, restart-safe checkpoints, queue UX,
@@ -18,8 +18,11 @@ retry/+$5 cards) → deep research (plan→search→advocate-vs-skeptic debate�
 closure, page reading, arbitrage valuation, builds ON TOP of previous reports) → appeals
 (opus, auto on suspicious kills) → owner workflow (verify/kill/promote/note/re-research,
 inline keyboards everywhere) → /sweep re-eval with reasoning versioning (ReasoningMilestones)
-→ /audit leak checks → relations (nano dup/variant links) → autopilot (10:00 ideation +
-individual-judgment research queueing, 21:00 digest, Ontario time) → multi-track pinned
+→ /audit leak checks → relations (nano dup/variant links) → concern-ledger distillation
+(v0.29: concerns re-adjudicated every round, appeals adjust scores, ⌛ staleness markers)
+→ partner seat + /origin + /models runtime switching (v0.30) → right-hand agentic chat
+(brain proposes, code executes after audit approval) + /mine + AI-kill auto-appeals (v0.31)
+→ autopilot (10:00 ideation ×5 sessions, 13:30 mine, 21:00 digest, Ontario time) → multi-track pinned
 status board (auto-renders any reporting track) → budget firewall (stage/daily/monthly caps,
 bumps, full ledger).
 

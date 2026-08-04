@@ -24,6 +24,9 @@
 | 10 | reeval (/sweep) | code + AI | heuristics + `openai/gpt-5-nano` | re-examines killed ideas under newest reasoning milestones; nano screen → research queue | status flips, queued jobs, `ai_ledger` |
 | 11 | audit | AI | `openai/gpt-5-nano` | weekly leak check: promising signals/ideas that fell through cracks | report to Telegram, `ai_ledger` |
 | 12 | advise | AI | `anthropic/claude-sonnet-5` | meta-review of pipeline health, suggestions | `journal/advice.md` via owner |
+| 13 | mine | AI | `anthropic/claude-sonnet-5` | asks the model's trained memory for concrete pains via rotating angles or operator fantasies; reply-chat continues; 1 auto-run/day | anchor `raw_items` (source=15) + `signals`, `ai_ledger` |
+| 14 | partner | AI | `anthropic/claude-opus-4.6` | ≤10-line blunt take: effort vs payoff, portfolio comparison, BUILD/PARK/FIX/KILL (button + /partner) | `ideas.PartnerJson`, `ai_ledger` |
+| 15 | hand | AI + **code** | `anthropic/claude-opus-4.6` | right-hand chat over the whole db: read intents executed by code, write proposals audit-gated (owner taps Apply), code is the only executor | `app_state` session + pending, `ai_ledger` |
 | — | budget | **code** | — | BudgetGuard: stage daily caps → global daily ($5+bumps) → monthly ($60) → per-call ceiling ($0.15; per-stage overrides, appeal $0.45) | `ai_ledger` (every call: stage, model, tokens in/out, USD, day), `app_state` (bumps) |
 | — | delivery | **code** | — | Telegram bot: commands, inline keyboards, reply-chained chunking, pinned status board, autopilot (10:00 ideate / 21:00 digest Ontario) | message ids in `jobs`/`app_state` |
 

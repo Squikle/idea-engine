@@ -37,6 +37,7 @@ internal sealed class AutopilotHostedService(
 
         var ideationTime = ParseTime(config.IdeationTime, new TimeOnly(10, 0));
         var digestTime = ParseTime(config.DigestTime, new TimeOnly(21, 0));
+        var mineTime = ParseTime(config.MineTime, new TimeOnly(13, 30));
 
         // Let ingestion/triage settle after startup, then bootstrap if needed.
         await Task.Delay(TimeSpan.FromSeconds(25), stoppingToken);
@@ -47,14 +48,15 @@ internal sealed class AutopilotHostedService(
             var now = timeProvider.GetUtcNow();
             var nextIdeation = Scheduling.NextOccurrence(ideationTime, timeZone, now);
             var nextDigest = Scheduling.NextOccurrence(digestTime, timeZone, now);
-            var runIdeation = nextIdeation <= nextDigest;
-            var nextAt = runIdeation ? nextIdeation : nextDigest;
+            var nextMine = Scheduling.NextOccurrence(mineTime, timeZone, now);
+            var nextAt = new[] { nextIdeation, nextDigest, nextMine }.Min();
+            var kind = nextAt == nextIdeation ? "ideation" : nextAt == nextDigest ? "digest" : "mine";
             await statusTracker.ScheduleAsync(Tracks.Ideate, nextIdeation, stoppingToken);
             await statusTracker.ScheduleAsync(Tracks.DigestTrack, nextDigest, stoppingToken);
 
             logger.LogInformation(
                 "Autopilot next: {Kind} at {Local} {Zone}",
-                runIdeation ? "ideation" : "digest",
+                kind,
                 TimeZoneInfo.ConvertTime(nextAt, timeZone).ToString("HH:mm", CultureInfo.InvariantCulture),
                 Scheduling.ZoneLabel(timeZone));
 
@@ -66,13 +68,17 @@ internal sealed class AutopilotHostedService(
 
             try
             {
-                if (runIdeation)
+                switch (kind)
                 {
-                    await RunIdeationWithResearchAsync(config, stoppingToken);
-                }
-                else
-                {
-                    await RunDigestAsync(stoppingToken);
+                    case "ideation":
+                        await RunIdeationWithResearchAsync(config, stoppingToken);
+                        break;
+                    case "mine":
+                        await RunMineAsync(stoppingToken);
+                        break;
+                    default:
+                        await RunDigestAsync(stoppingToken);
+                        break;
                 }
             }
             catch (OperationCanceledException)
@@ -81,7 +87,7 @@ internal sealed class AutopilotHostedService(
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Autopilot {Kind} run crashed", runIdeation ? "ideation" : "digest");
+                logger.LogError(ex, "Autopilot {Kind} run crashed", kind);
             }
         }
     }
@@ -131,8 +137,9 @@ internal sealed class AutopilotHostedService(
             var progress = await progressNotifier.StartAsync("Autopilot · ideation starting…", cancellationToken);
 
             using var scope = scopeFactory.CreateScope();
+            var sessions = await SettingAsync(scope, "sessions_per_day", config.SessionsPerDay, cancellationToken);
             var ideation = scope.ServiceProvider.GetRequiredService<IdeationService>();
-            result = await ideation.RunProductSessionsAsync(config.SessionsPerDay, progress, cancellationToken);
+            result = await ideation.RunProductSessionsAsync(sessions, progress, cancellationToken);
 
             await progress.CompleteAsync(
                 $"Autopilot ideation done · {result.Advanced} live · {result.Killed} killed · " +
@@ -145,6 +152,10 @@ internal sealed class AutopilotHostedService(
             OperationGates.Ideation.Release();
         }
 
+        // Court of appeal for the machine's own dead: AI-origin skeptic kills with a decent
+        // estimate get one automatic review - no more silent 13-of-17 graveyards.
+        await AutoAppealFreshKillsAsync(cancellationToken);
+
         if (config.AutoResearchTop <= 0 || result.Advanced == 0)
         {
             return;
@@ -153,12 +164,80 @@ internal sealed class AutopilotHostedService(
         await AutoResearchAsync(config, cancellationToken);
     }
 
+    private async Task AutoAppealFreshKillsAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            List<(long Id, string Title)> targets;
+            using (var scope = scopeFactory.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
+                var since = timeProvider.GetUtcNow().AddHours(-2);
+                var killed = await db.Ideas
+                    .Where(i => i.Origin == "ai" && i.Status == "dismissed" && i.AppealJson == null
+                        && i.CreatedAt >= since && i.Category != "meta")
+                    .ToListAsync(cancellationToken);
+                targets = [.. killed
+                    .Where(i => IdeaJson.ComputeRating(i) >= 0.45)
+                    .Take(3)
+                    .Select(i => (i.Id, i.Title))];
+            }
+
+            foreach (var (id, title) in targets)
+            {
+                using var scope = scopeFactory.CreateScope();
+                var appeal = scope.ServiceProvider
+                    .GetRequiredService<IdeaEngine.Infrastructure.Research.AppealService>();
+                var result = await appeal.RunAsync(id, cancellationToken);
+                if (result.StoppedReason is null && result.Html.Length > 0)
+                {
+                    await notifier.SendAsync(
+                        $"⚖️ <i>auto-appeal of fresh AI kill #{id} ({System.Net.WebUtility.HtmlEncode(IdeaEngine.Core.Common.TextClip.Clip(title, 50))})</i>\n" + result.Html,
+                        cancellationToken);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogError(ex, "Auto-appeal of fresh kills failed");
+        }
+    }
+
+    private async Task RunMineAsync(CancellationToken cancellationToken)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var mine = scope.ServiceProvider.GetRequiredService<IdeaEngine.Infrastructure.Mine.MineService>();
+        var result = await mine.RunAsync(null, null, cancellationToken);
+        if (result.StoppedReason is { } reason)
+        {
+            logger.LogInformation("Autopilot mine skipped: {Reason}", reason);
+            return;
+        }
+
+        await notifier.SendAsync(result.Html, cancellationToken);
+    }
+
+    private static async Task<int> SettingAsync(
+        IServiceScope scope, string key, int fallback, CancellationToken cancellationToken)
+    {
+        var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
+        var state = await db.AppState.FindAsync(["setting." + key], cancellationToken);
+        return state is not null && int.TryParse(state.Value, out var value) && value > 0 ? value : fallback;
+    }
+
     private async Task AutoResearchAsync(AutopilotOptions config, CancellationToken cancellationToken)
     {
         List<(long Id, string Title, double Rating)> rated;
+        double minRating;
+        int autoTop;
         using (var scope = scopeFactory.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
+            var floorState = await db.AppState.FindAsync(["setting.min_rating_for_research"], cancellationToken);
+            minRating = floorState is not null
+                && double.TryParse(floorState.Value, System.Globalization.NumberStyles.Any, CultureInfo.InvariantCulture, out var f)
+                && f is > 0 and < 1 ? f : config.MinRatingForResearch;
+            autoTop = await SettingAsync(scope, "auto_research_top", config.AutoResearchTop, cancellationToken);
             var since = timeProvider.GetUtcNow().AddHours(-48);
             var researchedIds = db.ResearchReports.Select(r => r.IdeaId);
             var candidates = await db.Ideas
@@ -176,12 +255,12 @@ internal sealed class AutopilotHostedService(
 
         // Individual judgment: everyone above the absolute floor gets a durable job.
         var eligible = rated
-            .Where(x => x.Rating >= config.MinRatingForResearch)
+            .Where(x => x.Rating >= minRating)
             .OrderByDescending(x => x.Rating)
             .ToList();
-        var queued = eligible.Take(Math.Max(0, config.AutoResearchTop)).ToList();
+        var queued = eligible.Take(Math.Max(0, autoTop)).ToList();
         var overflow = eligible.Skip(queued.Count).ToList();
-        var belowFloor = rated.Where(x => x.Rating < config.MinRatingForResearch).ToList();
+        var belowFloor = rated.Where(x => x.Rating < minRating).ToList();
 
         var builder = new System.Text.StringBuilder("🔬 <b>Auto-research</b>\n");
         if (queued.Count > 0)
@@ -204,7 +283,7 @@ internal sealed class AutopilotHostedService(
         {
             builder.Append("⏭ skipped #").Append(id).Append(" <i>(≈")
                 .Append((rating * 100).ToString("F0")).Append("% &lt; ")
-                .Append((config.MinRatingForResearch * 100).ToString("F0"))
+                .Append((minRating * 100).ToString("F0"))
                 .Append("% floor)</i> ")
                 .Append(System.Net.WebUtility.HtmlEncode(IdeaEngine.Core.Common.TextClip.Clip(title, 40)))
                 .Append(" — ").Append(IdeaEngine.Core.Common.Ui.Cmd("research", id)).Append(" to force\n");
