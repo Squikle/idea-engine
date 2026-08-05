@@ -279,6 +279,52 @@ public static class ServiceCollectionExtensions
                 o.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(70);
             });
         services.AddTransient<ISourceAdapter>(sp => sp.GetRequiredService<GdeltAdapter>());
+
+        services.Configure<Sources.ProductHunt.ProductHuntOptions>(
+            configuration.GetSection("IdeaEngine:Sources:ProductHunt"));
+        services
+            .AddHttpClient<Sources.ProductHunt.ProductHuntAdapter>(client =>
+            {
+                client.Timeout = TimeSpan.FromSeconds(20);
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("idea-engine/1.0 (personal research)");
+            })
+            .AddStandardResilienceHandler();
+        services.AddTransient<ISourceAdapter>(sp => sp.GetRequiredService<Sources.ProductHunt.ProductHuntAdapter>());
+
+        services.Configure<Sources.AppStore.AppStoreOptions>(
+            configuration.GetSection("IdeaEngine:Sources:AppStore"));
+        services
+            .AddHttpClient<Sources.AppStore.AppStoreChartsAdapter>(client =>
+            {
+                client.Timeout = TimeSpan.FromSeconds(20);
+            })
+            .AddStandardResilienceHandler();
+        services.AddTransient<ISourceAdapter>(sp => sp.GetRequiredService<Sources.AppStore.AppStoreChartsAdapter>());
+
+        services.Configure<Sources.StackExchange.StackExchangeOptions>(
+            configuration.GetSection("IdeaEngine:Sources:StackExchange"));
+        services
+            .AddHttpClient<Sources.StackExchange.StackExchangeAdapter>(client =>
+            {
+                client.Timeout = TimeSpan.FromSeconds(20);
+                // Cloudflare 403s UA-less clients regardless of API rules.
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("idea-engine/1.0 (personal research)");
+            })
+            // The SE API always gzips; without decompression every response is binary noise.
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+            {
+                AutomaticDecompression = System.Net.DecompressionMethods.GZip
+                    | System.Net.DecompressionMethods.Deflate,
+            })
+            .AddStandardResilienceHandler();
+        services.AddTransient<ISourceAdapter>(sp => sp.GetRequiredService<Sources.StackExchange.StackExchangeAdapter>());
+
+        services
+            .AddHttpClient<Research.EbayProbeClient>(client =>
+            {
+                client.Timeout = TimeSpan.FromSeconds(15);
+            })
+            .AddStandardResilienceHandler();
     }
 
     private static string BuildUserAgent(IConfiguration configuration)

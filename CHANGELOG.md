@@ -5,6 +5,22 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.33.0 — 2026-08-05
+
+### Added — more eyes
+- **Product Hunt source** (keyless Atom feed): front-page launches as competitor radar
+  and trend context — what just got built, in whose niche.
+- **App Store charts source** (Apple's official keyless RSS): daily top-free/top-paid
+  snapshots (one item per chart/app/day) — demand and willingness-to-pay trends;
+  the corpus becomes climb-detection material over weeks.
+- **StackExchange source** (keyless, gzip-aware): high-vote UNANSWERED questions from
+  stackoverflow+superuser — pains the community itself certified as unsolved.
+- **eBay Browse probe** (env-gated on EBAY_CLIENT_ID/SECRET): physical-product research
+  gets live listings with prices as a first-class evidence block. Without keys it skips
+  silently; RUNBOOK documents the 10-minute registration.
+- /collect aliases: ph, appstore, se — SourceKind.ProductHunt reuses its long-reserved
+  slot 6; charts=16, stackexchange=17.
+
 ## 0.32.0 — 2026-08-05
 
 ### Added — the glass pipeline

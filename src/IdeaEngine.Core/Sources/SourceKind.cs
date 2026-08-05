@@ -32,4 +32,10 @@ public enum SourceKind
 
     /// <summary>/mine — pains mined from a model's trained knowledge (not the live web).</summary>
     AiMine = 15,
+
+    /// <summary>Apple App Store chart snapshots (demand + willingness-to-pay trends).</summary>
+    AppStoreCharts = 16,
+
+    /// <summary>High-vote unanswered StackExchange questions (community-certified pains).</summary>
+    StackExchange = 17,
 }

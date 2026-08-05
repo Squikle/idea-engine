@@ -20,6 +20,10 @@ public static class SourceKindParser
             "reddit" or "rss" or "redditrss" => SourceKind.RedditRss,
             "youtube" or "yt" => SourceKind.YouTube,
             "gdelt" or "news" => SourceKind.Gdelt,
+            "mine" or "aimine" => SourceKind.AiMine,
+            "ph" or "producthunt" => SourceKind.ProductHunt,
+            "appstore" or "apps" or "charts" => SourceKind.AppStoreCharts,
+            "se" or "stackexchange" or "stackoverflow" => SourceKind.StackExchange,
             _ => SourceKind.Unknown,
         };
 

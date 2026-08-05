@@ -30,6 +30,7 @@ public sealed class ResearchService(
     IdeaEngineDbContext db,
     OpenRouterChatClient chat,
     BraveSearchClient brave,
+    EbayProbeClient ebay,
     PageFetcher pageFetcher,
     BudgetGuard budgetGuard,
     TimeProvider timeProvider,
@@ -186,6 +187,18 @@ public sealed class ResearchService(
         }
 
         searchesUsed += await SearchIntoAsync(blocks, queries, idea.Id, progress, options, cancellationToken);
+
+        // Real marketplace listings beat search snippets: when eBay keys exist, physical
+        // ideas get live listings as a first-class evidence block (rides into artifacts).
+        if (ebay.IsConfigured && idea.Category is "3dprint" or "hardware" or "wearable")
+        {
+            var ebayHits = await ebay.SearchAsync(TextClip.Clip(idea.Title, 60), 5, cancellationToken);
+            if (ebayHits.Count > 0)
+            {
+                blocks.Add(($"[eBay marketplace probe] {TextClip.Clip(idea.Title, 60)}", ebayHits));
+            }
+        }
+
         if (blocks.Sum(b => b.Hits.Count) == 0)
         {
             await db.SaveChangesAsync(cancellationToken);

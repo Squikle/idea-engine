@@ -5,13 +5,15 @@
 > [RUNBOOK.md](RUNBOOK.md) (how to run things). Keep this file terse and current —
 > updating it is part of every phase's definition of done.
 
-## Where the project actually is (2026-08-04, v0.31.0)
+## Where the project actually is (2026-08-05, v0.33.0)
 
 The phased plan below became reality faster than the phases: the full loop ships.
 
-**Shipped:** 9 sources (HN, RedditRSS+archaeology, 4chan, Lemmy, Bluesky, YouTube
-search + Shorts complaint-mining, GDELT news, /mine AI-memory mining;
-Etsy/Pinterest/Reddit-OAuth pending third-party approvals) → triage (nano, budget-capped)
+**Shipped:** 12 sources (HN, RedditRSS+archaeology, 4chan, Lemmy, Bluesky, YouTube
+search + Shorts complaint-mining, GDELT news, /mine AI-memory mining, Product Hunt
+launches, App Store chart snapshots, StackExchange unanswered pains; eBay Browse
+probe env-gated on EBAY_CLIENT_ID/SECRET; Etsy/Pinterest/Reddit-OAuth pending
+third-party approvals) → triage (nano, budget-capped)
 → signals with glance lines → ideation (builder+skeptic, 13 playbook lenses, long-tail
 signal blending) → durable jobs (/drop /research /dig, restart-safe checkpoints, queue UX,
 retry/+$5 cards) → deep research (plan→search→advocate-vs-skeptic debate→judge, multi-round

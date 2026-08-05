@@ -10,7 +10,7 @@
 
 | # | Stage (ledger name) | Code or AI | Model (default) | What it does | What it stores |
 |---|---|---|---|---|---|
-| 1 | ingest | **code** | — | 8 source adapters (HN, RedditRSS+archaeology, 4chan, Lemmy, Bluesky, YouTube+Shorts, GDELT) pull posts/comments on 3h cycles + backfill | `raw_items` (title/body/url/community/score/source), `pipeline_runs` row per adapter run |
+| 1 | ingest | **code** | — | 11 source adapters (HN, RedditRSS+archaeology, 4chan, Lemmy, Bluesky, YouTube+Shorts, GDELT, Product Hunt launches, App Store charts, StackExchange unanswered, + /mine) on 3h cycles + backfill; eBay Browse probe joins research for physical ideas when keys exist | `raw_items`, `pipeline_runs` row per adapter run |
 | 2 | prefilter | **code** | — | heuristics: length, spam patterns, dupe URL/id checks, language | flags on `raw_items` (skipped items keep the reason) |
 | 3 | triage | AI | `openai/gpt-5-nano` | batch-scores raw items for pain/idea potential 0–1; only survivors advance | score fields on `raw_items`, `ai_ledger` per call |
 | 4 | signals (+glance) | AI | `openai/gpt-5-nano` | clusters survivors into named pain signals; glance = one-line human summary | `signals` (name, summary, item links, strength) |

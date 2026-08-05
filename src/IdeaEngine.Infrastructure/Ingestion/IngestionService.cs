@@ -105,8 +105,13 @@ public sealed class IngestionService(
         catch (Exception ex)
         {
             errors++;
-            run.Notes = Truncate(ex.Message, 2000);
             logger.LogError(ex, "✗ {Source}: ingestion failed", adapter.Kind);
+
+            // A failed batch leaves poisoned entities tracked in the SHARED context -
+            // without clearing, every later source in the cycle dies of the same save.
+            db.ChangeTracker.Clear();
+            db.PipelineRuns.Attach(run);
+            run.Notes = Truncate(ex.Message, 2000);
         }
         finally
         {

@@ -49,9 +49,12 @@ dotnet test            # must be green; add tests for behavior changes
 # changelog entry + version bump in Directory.Build.props
 pkill -9 -f IdeaEngine.Worker; sleep 2
 : > logs/worker-console.log     # TRUNCATE FIRST - stale logs have fooled us before
-nohup dotnet run --project src/IdeaEngine.Worker > logs/worker-console.log 2>&1 & disown
+# DETACHED launch (macOS has no setsid binary; nohup+disown still dies with the
+# launching process group when an agent tool-call tears down - real incident):
+python3 -c "import subprocess,os; subprocess.Popen(['dotnet','run','--project','src/IdeaEngine.Worker'], stdout=open('logs/worker-console.log','ab'), stderr=subprocess.STDOUT, start_new_session=True, cwd=os.getcwd())"
 sleep 30
 grep -q "<new version> started" logs/worker-console.log && ! grep -q FTL logs/worker-console.log
+# verify the process survives YOUR OWN call boundary: ps in a SEPARATE call
 git add -A && git commit && git push
 ```
 
@@ -68,6 +71,8 @@ git add -A && git commit && git push
   zero retries, long pacing.
 - Telegram hard-limits 4096 chars: ALL sends go through chunking (`MessageChunker`);
   never `_bot.SendMessage` raw for variable-length content.
+- Worker launches MUST use `start_new_session=True` (python Popen) - `nohup ... & disown`
+  from an agent's bash call dies with the call's process group (silent bot downtime).
 - The AI-brain/code-executor split (right hand) is a LAW: models emit intents, only
   code touches the database, writes always show an audit card first.
 
