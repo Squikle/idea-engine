@@ -127,6 +127,58 @@ public sealed class IdeationService(
             advanced + killed + errors, advanced, killed, errors, totalCost, stoppedReason, lines);
     }
 
+    /// <summary>/ideate from 12 45: one session grounded on EXACTLY those signals.</summary>
+    public async Task<IdeationBatchResult> RunFromSignalsAsync(
+        IReadOnlyList<long> signalIds, string? forcedPlaybook, IProgressHandle? progress,
+        CancellationToken cancellationToken)
+    {
+        var options = await ResolveOptionsAsync(cancellationToken);
+        if (!options.Enabled || !chat.IsConfigured)
+        {
+            return new IdeationBatchResult(0, 0, 0, 0, 0, "ideation disabled or OPENROUTER_API_KEY missing", []);
+        }
+
+        var chosen = await db.Signals
+            .Where(s => signalIds.Contains(s.Id))
+            .Select(s => new GroundingSignal(
+                s.Id, s.Kind, s.CommercialSentiment, s.Confidence,
+                s.Summary, s.Audience, s.RawItem!.Community))
+            .ToListAsync(cancellationToken);
+        if (chosen.Count == 0)
+        {
+            return new IdeationBatchResult(0, 0, 0, 0, 0,
+                $"none of those signal ids exist ({string.Join(", ", signalIds)})", []);
+        }
+
+        var check = await budgetGuard.CheckAsync(
+            StageName, options.DailyUsdCap, WorstBuilderCallUsd(options),
+            WorstSessionUsd(options), cancellationToken);
+        if (!check.Allowed)
+        {
+            return new IdeationBatchResult(0, 0, 0, 0, 0, check.Reason, []);
+        }
+
+        var lenses = forcedPlaybook is { } forced && Playbooks.TryGet(forced, out var forcedLens)
+            ? (IReadOnlyList<Playbook>)[forcedLens]
+            : Playbooks.Sample(1);
+        await statusTracker.BeginAsync(Tracks.Ideate, $"from {chosen.Count} chosen signal(s)", cancellationToken);
+        var outcome = await RunSingleSessionAsync(
+            chosen, options, lenses, progress, 1, 1, cancellationToken, sampleOverride: chosen);
+        await statusTracker.EndAsync(
+            Tracks.Ideate,
+            outcome.Kind == SessionOutcomeKind.Advanced ? "🟢 from chosen signals" : "☠️/⛔ from chosen signals",
+            CancellationToken.None);
+
+        return new IdeationBatchResult(
+            1,
+            outcome.Kind == SessionOutcomeKind.Advanced ? 1 : 0,
+            outcome.Kind == SessionOutcomeKind.Killed ? 1 : 0,
+            outcome.Kind == SessionOutcomeKind.Error ? 1 : 0,
+            outcome.Cost,
+            null,
+            outcome.Line is { } line ? [line] : []);
+    }
+
     /// <summary>
     /// /drop: shape the operator's raw pitch into a structured idea, run the skeptic,
     /// store with Origin=operator. The command layer chains web research afterwards.
@@ -357,12 +409,14 @@ public sealed class IdeationService(
         IProgressHandle? progress,
         int session,
         int count,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<GroundingSignal>? sampleOverride = null)
     {
         decimal cost = 0;
+        var sessionStartedAt = timeProvider.GetUtcNow();
 
         // Vary grounding per session so ten sessions explore, not repeat.
-        var sample = SampleSignals(pool, options.SignalsPerSession);
+        var sample = sampleOverride ?? SampleSignals(pool, options.SignalsPerSession);
         var lensBlock = "Session lenses (steer the idea through these):\n"
             + string.Join('\n', lenses.Select(l => $"{l.Emoji} {l.Title}: {l.Guidance}"))
             + "\n\n";
@@ -436,12 +490,34 @@ public sealed class IdeationService(
             CreatedAt = timeProvider.GetUtcNow(),
         };
         db.Ideas.Add(entity);
+
+        // Fabrication trace: exactly which signals the builder SAW and which it CITED.
+        // /signal cards and audits read this - the owner asked for a glass pipeline.
+        db.PipelineRuns.Add(new PipelineRunEntity
+        {
+            Stage = "ideate:session",
+            StartedAt = sessionStartedAt,
+            FinishedAt = timeProvider.GetUtcNow(),
+            ItemsIn = sample.Count,
+            ItemsOut = advanced ? 1 : 0,
+            CostUsd = cost,
+            Notes = JsonSerializer.Serialize(new
+            {
+                sampled = sample.Select(s => s.Id),
+                cited = citedIds,
+                playbook = string.Join('+', lenses.Select(l => l.Key)),
+                outcome = advanced ? "advanced" : "killed",
+            }, LlmJson.Options),
+        });
         await db.SaveChangesAsync(cancellationToken);
 
         var lensTag = string.Join('+', lenses.Select(l => l.Key));
+        var chain = citedIds.Count > 0
+            ? " ⛓ " + string.Join(' ', citedIds.Take(4).Select(id => Ui.Cmd("signal", id)))
+            : string.Empty;
         var line = advanced
-            ? $"🟢 #{entity.Id} [{entity.Category}/e{entity.EffortScale}] ({lensTag}) {entity.Title}"
-            : $"☠️ #{entity.Id} [{entity.Category}/e{entity.EffortScale}] ({lensTag}) {entity.Title} — {(killReason is null ? "skeptic said no" : TextClip.Clip(killReason, 90))}";
+            ? $"🟢 #{entity.Id} [{entity.Category}/e{entity.EffortScale}] ({lensTag}) {entity.Title}{chain}"
+            : $"☠️ #{entity.Id} [{entity.Category}/e{entity.EffortScale}] ({lensTag}) {entity.Title} — {(killReason is null ? "skeptic said no" : TextClip.Clip(killReason, 90))}{chain}";
 
         return new SessionOutcome(
             advanced ? SessionOutcomeKind.Advanced : SessionOutcomeKind.Killed, line, cost);

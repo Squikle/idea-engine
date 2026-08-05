@@ -12,12 +12,10 @@ public sealed class TelegramNotifier(
     long adminChatId,
     ILogger<TelegramNotifier> logger) : INotifier
 {
-    private const int ChunkLimit = 4000; // Telegram hard limit is 4096
-
     public async Task SendAsync(string html, CancellationToken cancellationToken)
     {
         int? previousId = null;
-        foreach (var chunk in SplitAtLines(html))
+        foreach (var chunk in IdeaEngine.Core.Common.MessageChunker.Split(html))
         {
             // Continuations reply to the previous chunk so long cards read as one thread.
             previousId = await SendChunkAsync(chunk, previousId, cancellationToken) ?? previousId;
@@ -67,30 +65,4 @@ public sealed class TelegramNotifier(
         }
     }
 
-    /// <summary>Splits oversized messages at line boundaries so nothing is ever dropped.</summary>
-    private static IEnumerable<string> SplitAtLines(string html)
-    {
-        if (html.Length <= ChunkLimit)
-        {
-            yield return html;
-            yield break;
-        }
-
-        var current = new System.Text.StringBuilder();
-        foreach (var line in html.Split('\n'))
-        {
-            if (current.Length + line.Length + 1 > ChunkLimit && current.Length > 0)
-            {
-                yield return current.ToString().TrimEnd();
-                current.Clear();
-            }
-
-            current.Append(line).Append('\n');
-        }
-
-        if (current.Length > 0)
-        {
-            yield return current.ToString().TrimEnd();
-        }
-    }
 }

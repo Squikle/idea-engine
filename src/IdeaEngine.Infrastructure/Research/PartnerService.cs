@@ -28,12 +28,15 @@ public sealed class PartnerOptions
 
     public int MaxCompletionTokens { get; set; } = 1200;
 
+    public string ReasoningEffort { get; set; } = "medium";
+
     public PartnerOptions WithModel(ResolvedModel resolved)
     {
         var clone = (PartnerOptions)MemberwiseClone();
         clone.Model = resolved.Model;
         clone.InputPricePerMTok = resolved.InPerMTok;
         clone.OutputPricePerMTok = resolved.OutPerMTok;
+        clone.ReasoningEffort = resolved.Effort ?? clone.ReasoningEffort;
         return clone;
     }
 }
@@ -109,7 +112,7 @@ public sealed class PartnerService(
 
         var context = await BuildContextAsync(idea, report, cancellationToken);
         var completion = await chat.CompleteAsync(
-            options.Model, SystemPrompt, context, options.MaxCompletionTokens, "medium", cancellationToken);
+            options.Model, SystemPrompt, context, options.MaxCompletionTokens, options.ReasoningEffort, cancellationToken);
 
         decimal cost = 0;
         if (completion is { IsError: false })

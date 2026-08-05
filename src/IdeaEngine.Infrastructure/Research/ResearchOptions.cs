@@ -31,6 +31,7 @@ public sealed class ResearchOptions
         clone.RepairModel = repair.Model;
         clone.RepairInputPricePerMTok = repair.InPerMTok;
         clone.RepairOutputPricePerMTok = repair.OutPerMTok;
+        clone.ReasoningEffort = main.Effort ?? clone.ReasoningEffort;
         return clone;
     }
 

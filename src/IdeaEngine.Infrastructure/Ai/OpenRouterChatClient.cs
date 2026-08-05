@@ -4,6 +4,9 @@ using Microsoft.Extensions.Logging;
 
 namespace IdeaEngine.Infrastructure.Ai;
 
+/// <summary>One row of the live OpenRouter catalog ($ per MILLION tokens).</summary>
+public sealed record CatalogModel(string Id, decimal InPerMTok, decimal OutPerMTok, long? ContextLength);
+
 /// <summary>Result of one chat completion, with usage for the ledger.</summary>
 public sealed record ChatCompletion(string? Content, long TokensIn, long TokensOut, string? FinishReason)
 {
@@ -78,6 +81,57 @@ public sealed class OpenRouterChatClient(
         }
     }
 
+    private static readonly object CatalogLock = new();
+
+    private static (DateTimeOffset At, IReadOnlyList<CatalogModel> Models)? _catalogCache;
+
+    /// <summary>
+    /// Live model catalog from OpenRouter (id + $/MTok), cached 1h. The owner can discover
+    /// and adopt models without visiting the docs; /models set autofills prices from here.
+    /// </summary>
+    public async Task<IReadOnlyList<CatalogModel>?> ListModelsAsync(CancellationToken cancellationToken)
+    {
+        lock (CatalogLock)
+        {
+            if (_catalogCache is { } cached && cached.At > DateTimeOffset.UtcNow.AddHours(-1))
+            {
+                return cached.Models;
+            }
+        }
+
+        try
+        {
+            var response = await httpClient.GetFromJsonAsync<ModelsEnvelope>(
+                new Uri("models", UriKind.Relative), LlmJson.Options, cancellationToken);
+            var models = (response?.Data ?? [])
+                .Where(m => m.Id is { Length: > 0 } && m.Pricing is not null)
+                .Select(m => new CatalogModel(
+                    m.Id!,
+                    ParsePerTokenPrice(m.Pricing!.Prompt) * 1_000_000m,
+                    ParsePerTokenPrice(m.Pricing.Completion) * 1_000_000m,
+                    m.ContextLength))
+                .OrderBy(m => m.Id, StringComparer.Ordinal)
+                .ToList();
+            lock (CatalogLock)
+            {
+                _catalogCache = (DateTimeOffset.UtcNow, models);
+            }
+
+            return models;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Model catalog fetch failed");
+            return null;
+        }
+    }
+
+    private static decimal ParsePerTokenPrice(string? value) =>
+        decimal.TryParse(value, System.Globalization.NumberStyles.Any,
+            System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : 0;
+
     /// <summary>Live prepaid balance: (deposited, used). Null when the endpoint is unreachable.</summary>
     public async Task<(decimal Total, decimal Used)?> GetCreditsAsync(CancellationToken cancellationToken)
     {
@@ -93,6 +147,17 @@ public sealed class OpenRouterChatClient(
             return null;
         }
     }
+
+    private sealed record ModelsEnvelope([property: JsonPropertyName("data")] IReadOnlyList<ModelRow>? Data);
+
+    private sealed record ModelRow(
+        [property: JsonPropertyName("id")] string? Id,
+        [property: JsonPropertyName("context_length")] long? ContextLength,
+        [property: JsonPropertyName("pricing")] PricingRow? Pricing);
+
+    private sealed record PricingRow(
+        [property: JsonPropertyName("prompt")] string? Prompt,
+        [property: JsonPropertyName("completion")] string? Completion);
 
     private sealed record ErrorEnvelope([property: JsonPropertyName("error")] ErrorBody? Error);
 

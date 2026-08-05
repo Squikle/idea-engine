@@ -35,9 +35,7 @@ internal sealed class AutopilotHostedService(
             return;
         }
 
-        var ideationTime = ParseTime(config.IdeationTime, new TimeOnly(10, 0));
-        var digestTime = ParseTime(config.DigestTime, new TimeOnly(21, 0));
-        var mineTime = ParseTime(config.MineTime, new TimeOnly(13, 30));
+        // Times re-resolve every loop pass so /config changes apply without a restart.
 
         // Let ingestion/triage settle after startup, then bootstrap if needed.
         await Task.Delay(TimeSpan.FromSeconds(25), stoppingToken);
@@ -46,6 +44,9 @@ internal sealed class AutopilotHostedService(
         while (!stoppingToken.IsCancellationRequested)
         {
             var now = timeProvider.GetUtcNow();
+            var ideationTime = ParseTime(await TimeSettingAsync("ideation_time", config.IdeationTime, stoppingToken), new TimeOnly(10, 0));
+            var digestTime = ParseTime(await TimeSettingAsync("digest_time", config.DigestTime, stoppingToken), new TimeOnly(21, 0));
+            var mineTime = ParseTime(await TimeSettingAsync("mine_time", config.MineTime, stoppingToken), new TimeOnly(13, 30));
             var nextIdeation = Scheduling.NextOccurrence(ideationTime, timeZone, now);
             var nextDigest = Scheduling.NextOccurrence(digestTime, timeZone, now);
             var nextMine = Scheduling.NextOccurrence(mineTime, timeZone, now);
@@ -186,15 +187,13 @@ internal sealed class AutopilotHostedService(
             foreach (var (id, title) in targets)
             {
                 using var scope = scopeFactory.CreateScope();
-                var appeal = scope.ServiceProvider
-                    .GetRequiredService<IdeaEngine.Infrastructure.Research.AppealService>();
-                var result = await appeal.RunAsync(id, cancellationToken);
-                if (result.StoppedReason is null && result.Html.Length > 0)
-                {
-                    await notifier.SendAsync(
-                        $"⚖️ <i>auto-appeal of fresh AI kill #{id} ({System.Net.WebUtility.HtmlEncode(IdeaEngine.Core.Common.TextClip.Clip(title, 50))})</i>\n" + result.Html,
-                        cancellationToken);
-                }
+                var jobs = scope.ServiceProvider.GetRequiredService<IdeaEngine.Infrastructure.Jobs.JobService>();
+                var (jobId, _) = await jobs.EnqueueAsync(
+                    "appeal", new IdeaEngine.Infrastructure.Jobs.AppealJobPayload(id), null, cancellationToken);
+                await notifier.SendAsync(
+                    $"⚖️ <i>auto-appeal queued (light lane, job #{jobId}) for fresh AI kill #{id} " +
+                    $"({System.Net.WebUtility.HtmlEncode(IdeaEngine.Core.Common.TextClip.Clip(title, 50))})</i>",
+                    cancellationToken);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -307,6 +306,14 @@ internal sealed class AutopilotHostedService(
         var digest = scope.ServiceProvider.GetRequiredService<DigestService>();
         await notifier.SendAsync(await digest.BuildAsync(cancellationToken), cancellationToken);
         await statusTracker.EndAsync(Tracks.DigestTrack, "sent", CancellationToken.None);
+    }
+
+    private async Task<string> TimeSettingAsync(string key, string fallback, CancellationToken cancellationToken)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
+        var state = await db.AppState.FindAsync(["setting." + key], cancellationToken);
+        return state?.Value is { Length: > 0 } value ? value : fallback;
     }
 
     private static TimeOnly ParseTime(string value, TimeOnly fallback) =>

@@ -5,6 +5,42 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.32.0 — 2026-08-05
+
+### Added — the glass pipeline
+- **Parallel queue lanes**: appeal + partner are durable jobs now (restart-safe, budget-hold,
+  /queue, cancel, retry) on a LIGHT lane that runs alongside the HEAVY lane (research/dig/drop).
+  An appeal never waits behind a 12-minute research again. Multi-id everywhere:
+  /appeal 55 56 58 · /partner 69 24 · /kill /promote /verify take lists too.
+- **Ideation transparency**: every session records exactly which signals it SAW and CITED
+  (pipeline_runs); session cards show ⛓ tappable /signal links; **/ideate from 12 45
+  [playbook]** builds one idea from exactly those signals.
+- **/signals browser** (filters all/pain/wish/trend/mine/unused/used × 💎value/🕐newest ×
+  📅day grouping) + **/signal 123 lineage card**: born-from (source post or /mine angle+question)
+  and consumed-by (ideas citing it). /idea gained a 🧬 Born-from block — the chain
+  source → signal → idea → research → appeal → partner is walkable in both directions.
+- **📅 day grouping** on /ideas + /signals (today/yesterday/date headers) with a toggle;
+  defaults on for timeline views (fresh/all), off for score views — fair sorting stays fair.
+- **/config** — real settings manager: every runtime setting with current value, default and
+  allowed range; /config set mine_time 15:00 applies live (autopilot re-reads each pass).
+  One whitelist shared with the right hand.
+- **/models available [search]** — the live OpenRouter catalog with $/MTok (cached 1h);
+  /models set autofills prices from it. **Reasoning effort per stage**: /models effort
+  research high (minimal/low/medium/high) — visible in /models, applied without code.
+- **Marketplace honesty** (the PowderPal lesson): physical categories get mandatory
+  site:amazon.com + site:etsy.com probes; reports must state marketplace coverage —
+  "no competitors" without marketplace evidence is a failed report. Reasoning milestone →
+  physical ideas show ⌛ for re-runs.
+- **AGENTS.md** — root entry point for any model: read order, owner laws, where-things-go,
+  ship ritual, hard-won lessons.
+
+### Fixed
+- **/origin crash class**: all command replies now chunk at line boundaries into
+  reply-chained messages (MessageChunker) — nothing dies of MESSAGE_TOO_LONG.
+- **Research context diet**: follow-up rounds send only new evidence + a settled-findings
+  digest instead of replaying every SERP (~30-50% input cut on multi-round runs).
+  Triage terse-ification was evaluated and rejected: its output IS the signal payload.
+
 ## 0.31.0 — 2026-08-04
 
 ### Added — right hand, mine, throughput (Wave 3)

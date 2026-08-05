@@ -22,6 +22,7 @@ public static class ReasoningMilestones
         new(new Version(0, 27, 0), "pre-research skeptic kills auto-appealed on operator drops; overturn revives to candidate"),
         new(new Version(0, 29, 0), "concern-ledger distillation: concerns tracked open/mitigated/fatal across rounds; competitor-presence validates demand; evidence-age and garage-economics rules; appeals adjust scores"),
         new(new Version(0, 31, 0), "AI-origin skeptic kills auto-appealed (rating floor 45%); /mine pains join the signal pool"),
+        new(new Version(0, 32, 0), "marketplace honesty: physical products get mandatory amazon/etsy probes; reports must state marketplace coverage"),
     ];
 
     /// <summary>Upgrades a report produced at <paramref name="reportVersion"/> has never seen.

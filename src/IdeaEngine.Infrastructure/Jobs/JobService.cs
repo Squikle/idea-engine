@@ -14,6 +14,12 @@ public sealed record DropJobPayload(
 public sealed record DigJobPayload(
     [property: JsonPropertyName("topic")] string Topic);
 
+public sealed record AppealJobPayload(
+    [property: System.Text.Json.Serialization.JsonPropertyName("idea_id")] long IdeaId);
+
+public sealed record PartnerJobPayload(
+    [property: System.Text.Json.Serialization.JsonPropertyName("idea_id")] long IdeaId);
+
 public sealed record ResearchJobPayload(
     [property: JsonPropertyName("idea_id")] long IdeaId);
 
@@ -59,12 +65,22 @@ public sealed class JobService(IdeaEngineDbContext db, TimeProvider timeProvider
                     .SetProperty(j => j.UpdatedAt, timeProvider.GetUtcNow()),
                 cancellationToken);
 
-    public async Task<JobEntity?> ClaimNextAsync(CancellationToken cancellationToken)
+    public async Task<JobEntity?> ClaimNextAsync(CancellationToken cancellationToken) =>
+        await ClaimNextAsync(null, cancellationToken);
+
+    /// <summary>Claims the oldest runnable job, optionally restricted to a lane's kinds.</summary>
+    public async Task<JobEntity?> ClaimNextAsync(string[]? kinds, CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
-        var job = await db.Jobs
+        var query = db.Jobs
             .Where(j => j.Status == "queued"
-                || (j.Status == "held" && j.HoldUntil != null && j.HoldUntil <= now))
+                || (j.Status == "held" && j.HoldUntil != null && j.HoldUntil <= now));
+        if (kinds is { Length: > 0 })
+        {
+            query = query.Where(j => kinds.Contains(j.Kind));
+        }
+
+        var job = await query
             .OrderBy(j => j.Id)
             .FirstOrDefaultAsync(cancellationToken);
         if (job is null)

@@ -29,6 +29,8 @@ public sealed class AppealOptions
 
     public int MaxCompletionTokens { get; set; } = 3000;
 
+    public string ReasoningEffort { get; set; } = "medium";
+
     /// <summary>Auto-appeal fires when a no-go verdict carries a score at/above this.</summary>
     public double AutoAppealMinScore { get; set; } = 0.5;
 
@@ -39,6 +41,7 @@ public sealed class AppealOptions
         clone.Model = resolved.Model;
         clone.InputPricePerMTok = resolved.InPerMTok;
         clone.OutputPricePerMTok = resolved.OutPerMTok;
+        clone.ReasoningEffort = resolved.Effort ?? clone.ReasoningEffort;
         return clone;
     }
 }
@@ -159,7 +162,7 @@ public sealed class AppealService(
 
         var completion = await chat.CompleteAsync(
             options.Model, SystemPrompt, builder.ToString(),
-            options.MaxCompletionTokens, "medium", cancellationToken);
+            options.MaxCompletionTokens, options.ReasoningEffort, cancellationToken);
 
         decimal cost = 0;
         if (completion is { IsError: false })

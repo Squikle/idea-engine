@@ -13,6 +13,9 @@ public static class ResearchPrompts
         Rules: 4-8 specific web search queries. Cover: direct competitors and existing products,
         pricing of alternatives, evidence of demand (forums, reviews, marketplaces), and the
         skeptic's open questions. Use concrete product nouns, not abstractions. English only.
+        For PHYSICAL products (gadgets, 3D prints, kitchen tools, wearables): include at least
+        one marketplace query (amazon/etsy product terms) - a physical idea validated without
+        checking marketplaces is a false positive waiting to happen.
         """;
 
     public static readonly string AdvocateSystem =
@@ -81,6 +84,10 @@ public static class ResearchPrompts
         - GARAGE ECONOMICS: payoff vs effort at 1-3 person scale. A days-sized build with a
           reachable niche and a small subscription is a valid "go" - never demand unicorn TAM.
           Judge willingness_to_pay against the NICHE's reality, not venture scale.
+        - MARKETPLACE HONESTY (physical products): state explicitly which marketplaces the
+          results covered (amazon/etsy/other) and what exists there. "No competitors found"
+          without marketplace evidence in the results is a FAILED report - say "marketplaces
+          not covered by results" instead, and keep competition_gap conservative.
         - "go" requires BOTH demand evidence AND a reachable gap; otherwise "maybe".
         - Right-goal judging: "reputation" category = virality/stars potential, "content" =
           audience growth - not revenue. Absurd/status plays live on shareability.

@@ -29,12 +29,15 @@ public sealed class MineOptions
 
     public int MaxCompletionTokens { get; set; } = 1800;
 
+    public string ReasoningEffort { get; set; } = "medium";
+
     public MineOptions WithModel(ResolvedModel resolved)
     {
         var clone = (MineOptions)MemberwiseClone();
         clone.Model = resolved.Model;
         clone.InputPricePerMTok = resolved.InPerMTok;
         clone.OutputPricePerMTok = resolved.OutPerMTok;
+        clone.ReasoningEffort = resolved.Effort ?? clone.ReasoningEffort;
         return clone;
     }
 }
@@ -140,7 +143,7 @@ public sealed class MineService(
 
         var completion = await chat.CompleteAsync(
             options.Model, SystemPrompt, user.ToString(),
-            options.MaxCompletionTokens, "medium", cancellationToken);
+            options.MaxCompletionTokens, options.ReasoningEffort, cancellationToken);
 
         decimal cost = 0;
         if (completion is { IsError: false })

@@ -6,7 +6,7 @@ using IdeaEngine.Infrastructure.Persistence.Entities;
 namespace IdeaEngine.Infrastructure.Ai;
 
 /// <summary>Effective model for a stage: configured default or the owner's runtime override.</summary>
-public sealed record ResolvedModel(string Model, decimal InPerMTok, decimal OutPerMTok, bool Overridden);
+public sealed record ResolvedModel(string Model, decimal InPerMTok, decimal OutPerMTok, bool Overridden, string? Effort = null);
 
 /// <summary>
 /// Runtime model switching without code changes: /models set &lt;stage&gt; &lt;id&gt; [in] [out]
@@ -37,9 +37,17 @@ public sealed class ModelRegistry(IdeaEngineDbContext db, TimeProvider timeProvi
     {
         var state = await db.AppState.FindAsync([KeyPrefix + stage], cancellationToken);
         if (state?.Value is { Length: > 0 } json
-            && LlmJson.SafeDeserialize<OverrideDto>(json) is { Model.Length: > 0 } over)
+            && LlmJson.SafeDeserialize<OverrideDto>(json) is { } over
+            && (over.Model is { Length: > 0 } || over.Effort is { Length: > 0 }))
         {
-            return new ResolvedModel(over.Model, over.In ?? defaultIn, over.Out ?? defaultOut, true);
+            var model = over.Model is { Length: > 0 } ? over.Model : defaultModel;
+            var pricesKnown = over.Model is { Length: > 0 };
+            return new ResolvedModel(
+                model,
+                over.In ?? (pricesKnown ? defaultIn : defaultIn),
+                over.Out ?? defaultOut,
+                over.Model is { Length: > 0 },
+                over.Effort);
         }
 
         return new ResolvedModel(defaultModel, defaultIn, defaultOut, false);
@@ -54,8 +62,9 @@ public sealed class ModelRegistry(IdeaEngineDbContext db, TimeProvider timeProvi
             (inPrice, outPrice) = known;
         }
 
+        var existing = await LoadOverrideAsync(stage, cancellationToken);
         var json = JsonSerializer.Serialize(
-            new OverrideDto(model, inPrice, outPrice), LlmJson.Options);
+            new OverrideDto(model, inPrice, outPrice, existing?.Effort), LlmJson.Options);
         var key = KeyPrefix + stage;
         var state = await db.AppState.FindAsync([key], cancellationToken);
         if (state is null)
@@ -76,6 +85,38 @@ public sealed class ModelRegistry(IdeaEngineDbContext db, TimeProvider timeProvi
         await db.SaveChangesAsync(cancellationToken);
     }
 
+    /// <summary>Reasoning effort per stage (minimal|low|medium|high) - kept alongside the model override.</summary>
+    public async Task SetEffortAsync(string stage, string? effort, CancellationToken cancellationToken)
+    {
+        var existing = await LoadOverrideAsync(stage, cancellationToken);
+        var json = JsonSerializer.Serialize(
+            new OverrideDto(existing?.Model, existing?.In, existing?.Out, effort), LlmJson.Options);
+        var key = KeyPrefix + stage;
+        var state = await db.AppState.FindAsync([key], cancellationToken);
+        if (state is null)
+        {
+            db.AppState.Add(new AppStateEntity
+            {
+                Key = key,
+                Value = json,
+                UpdatedAt = timeProvider.GetUtcNow(),
+            });
+        }
+        else
+        {
+            state.Value = json;
+            state.UpdatedAt = timeProvider.GetUtcNow();
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task<OverrideDto?> LoadOverrideAsync(string stage, CancellationToken cancellationToken)
+    {
+        var state = await db.AppState.FindAsync([KeyPrefix + stage], cancellationToken);
+        return state?.Value is { Length: > 0 } json ? LlmJson.SafeDeserialize<OverrideDto>(json) : null;
+    }
+
     public async Task<bool> ResetAsync(string stage, CancellationToken cancellationToken)
     {
         var state = await db.AppState.FindAsync([KeyPrefix + stage], cancellationToken);
@@ -92,5 +133,6 @@ public sealed class ModelRegistry(IdeaEngineDbContext db, TimeProvider timeProvi
     private sealed record OverrideDto(
         [property: JsonPropertyName("model")] string? Model,
         [property: JsonPropertyName("in")] decimal? In,
-        [property: JsonPropertyName("out")] decimal? Out);
+        [property: JsonPropertyName("out")] decimal? Out,
+        [property: JsonPropertyName("effort")] string? Effort = null);
 }

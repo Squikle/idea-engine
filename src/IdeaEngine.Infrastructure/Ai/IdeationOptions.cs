@@ -29,6 +29,7 @@ public sealed class IdeationOptions
         clone.SkepticModel = skeptic.Model;
         clone.SkepticInputPricePerMTok = skeptic.InPerMTok;
         clone.SkepticOutputPricePerMTok = skeptic.OutPerMTok;
+        clone.ReasoningEffort = builder.Effort ?? clone.ReasoningEffort;
         return clone;
     }
 

@@ -176,6 +176,15 @@ public sealed class ResearchService(
                 : [idea.Title];
         }
 
+        // Physical products die of "one Google search finds it on Amazon" (the PowderPal
+        // lesson): marketplace probes are mandatory, not optional, for these categories.
+        if (idea.Category is "3dprint" or "hardware" or "wearable")
+        {
+            var productTerms = TextClip.Clip(idea.Title, 60);
+            queries.Add($"site:amazon.com {productTerms}");
+            queries.Add($"site:etsy.com {productTerms}");
+        }
+
         searchesUsed += await SearchIntoAsync(blocks, queries, idea.Id, progress, options, cancellationToken);
         if (blocks.Sum(b => b.Hits.Count) == 0)
         {
@@ -210,10 +219,14 @@ public sealed class ResearchService(
             AddArtifact(artifacts, idea.Id, "advocate", 0, new { raw = advocateJson });
         }
 
-        // Synthesis rounds until closure or MaxRounds.
+        // Synthesis rounds until closure or MaxRounds. CONTEXT DIET: after round 1 the
+        // judge gets only NEW evidence + a compact settled-findings digest instead of the
+        // full SERP replay - cuts input tokens ~30-50% on multi-round runs.
         ResearchReportDto? report = null;
         string? lastSynthesisDiag = null;
         string? lastSynthesisRaw = null;
+        string? settledDigest = null;
+        var blocksBaseline = 0;
         var rounds = 0;
         while (rounds < Math.Max(1, options.MaxRounds))
         {
@@ -225,10 +238,13 @@ public sealed class ResearchService(
                     cancellationToken);
             }
 
+            var roundBlocks = settledDigest is null ? blocks : blocks.Skip(blocksBaseline).ToList();
+            var roundContext = settledDigest is null ? ideaContext : ideaContext + settledDigest;
+
             string? synthesisDiag;
             string? synthesisRaw;
             (report, synthesisDiag, synthesisRaw) = await SynthesizeAsync(
-                ideaContext, blocks, pageExcerpts, options, c => cost += c, cancellationToken);
+                roundContext, roundBlocks, pageExcerpts, options, c => cost += c, cancellationToken);
             if (report is null)
             {
                 lastSynthesisDiag = synthesisDiag;
@@ -241,6 +257,10 @@ public sealed class ResearchService(
             {
                 break;
             }
+
+            // Freeze what's settled before the follow-up searches append new blocks.
+            settledDigest = BuildSettledDigest(report);
+            blocksBaseline = blocks.Count;
 
             var roundCheck = await budgetGuard.CheckAsync(
                 StageName, options.DailyUsdCap, worstSynthesis, worstSynthesis, cancellationToken);
@@ -557,6 +577,36 @@ public sealed class ResearchService(
         });
 
         return cost;
+    }
+
+    /// <summary>Compact replacement for re-sending old SERPs on follow-up rounds.</summary>
+    private static string BuildSettledDigest(ResearchReportDto report)
+    {
+        var digest = new StringBuilder("\nSETTLED IN YOUR PREVIOUS ROUND (do not re-derive; evidence already seen):\n");
+        digest.Append("- verdict lean: ").Append(report.Verdict).Append(" (conf ")
+            .Append(report.Confidence.ToString("F2", CultureInfo.InvariantCulture)).Append(")\n");
+        var competitors = (report.Competitors ?? []).Where(c => c.Name is { Length: > 0 }).ToList();
+        if (competitors.Count > 0)
+        {
+            digest.Append("- competitors already found: ")
+                .Append(string.Join("; ", competitors.Select(c => $"{c.Name} ({c.Url})"))).Append('\n');
+        }
+
+        foreach (var answer in (report.Answers ?? []).Where(a => a.IsAnswered))
+        {
+            digest.Append("- ANSWERED: ").Append(answer.Question).Append(" → ")
+                .Append(TextClip.Clip(answer.Answer ?? string.Empty, 160)).Append('\n');
+        }
+
+        foreach (var concern in report.Concerns ?? [])
+        {
+            digest.Append("- concern [").Append(concern.Status).Append("]: ")
+                .Append(TextClip.Clip(concern.Text ?? string.Empty, 120)).Append('\n');
+        }
+
+        digest.Append("Carry these forward unchanged unless NEW evidence below contradicts them; ")
+            .Append("your report must still be COMPLETE (all competitors, all concerns, all answers).\n");
+        return digest.ToString();
     }
 
     private static int CountBlocking(IReadOnlyList<ConcernDto>? concerns) =>

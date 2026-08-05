@@ -22,6 +22,9 @@ internal sealed class JobRunnerOptions
     public int ResearchTimeoutMinutes { get; set; } = 12;
 
     public int DigTimeoutMinutes { get; set; } = 10;
+
+    /// <summary>Appeal/partner run on the LIGHT lane - single calls, short leash.</summary>
+    public int LightTimeoutMinutes { get; set; } = 6;
 }
 
 internal sealed class JobRunnerHostedService(
@@ -42,11 +45,23 @@ internal sealed class JobRunnerHostedService(
     /// <summary>Same coalescing for OpenRouter credit exhaustion (different remedy).</summary>
     private DateOnly _creditCardShownOn;
 
+    /// <summary>HEAVY = long multi-call pipelines (serial). LIGHT = single-call reviews
+    /// that must never wait behind a 12-minute research. Lanes run in parallel.</summary>
+    private static readonly string[] HeavyKinds = ["drop", "research", "dig"];
+
+    private static readonly string[] LightKinds = ["appeal", "partner"];
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await Task.Delay(TimeSpan.FromSeconds(8), stoppingToken);
         await RecoverAsync(stoppingToken);
+        await Task.WhenAll(
+            RunLaneAsync(HeavyKinds, stoppingToken),
+            RunLaneAsync(LightKinds, stoppingToken));
+    }
 
+    private async Task RunLaneAsync(string[] kinds, CancellationToken stoppingToken)
+    {
         while (!stoppingToken.IsCancellationRequested)
         {
             JobEntity? job = null;
@@ -55,7 +70,7 @@ internal sealed class JobRunnerHostedService(
                 using (var scope = scopeFactory.CreateScope())
                 {
                     job = await scope.ServiceProvider.GetRequiredService<JobService>()
-                        .ClaimNextAsync(stoppingToken);
+                        .ClaimNextAsync(kinds, stoppingToken);
                 }
 
                 if (job is null)
@@ -68,6 +83,7 @@ internal sealed class JobRunnerHostedService(
                 {
                     "drop" => runnerOptions.Value.DropTimeoutMinutes,
                     "dig" => runnerOptions.Value.DigTimeoutMinutes,
+                    "appeal" or "partner" => runnerOptions.Value.LightTimeoutMinutes,
                     _ => runnerOptions.Value.ResearchTimeoutMinutes,
                 });
 
@@ -160,6 +176,12 @@ internal sealed class JobRunnerHostedService(
                 break;
             case "dig":
                 await ExecuteDigAsync(job, cancellationToken);
+                break;
+            case "appeal":
+                await ExecuteAppealAsync(job, cancellationToken);
+                break;
+            case "partner":
+                await ExecutePartnerAsync(job, cancellationToken);
                 break;
             default:
                 logger.LogWarning("Unknown job kind {Kind} (#{JobId}), marking done", job.Kind, job.Id);
@@ -421,6 +443,56 @@ internal sealed class JobRunnerHostedService(
         await MaybeAutoAppealAsync(result, cancellationToken);
     }
 
+    private async Task ExecuteAppealAsync(JobEntity job, CancellationToken cancellationToken)
+    {
+        var payload = JsonSerializer.Deserialize<AppealJobPayload>(job.PayloadJson, LlmJson.Options)
+            ?? throw new InvalidOperationException("appeal payload unreadable");
+        var progress = await progressNotifier.StartAsync(
+            $"⚖️ Appeal (job #{job.Id}) · idea #{payload.IdeaId} under review…",
+            job.OriginMessageId,
+            cancellationToken);
+        await SaveProgressIdAsync(job.Id, progress.MessageId, cancellationToken);
+
+        using var scope = scopeFactory.CreateScope();
+        var appeal = scope.ServiceProvider.GetRequiredService<IdeaEngine.Infrastructure.Research.AppealService>();
+        var result = await appeal.RunAsync(payload.IdeaId, cancellationToken);
+        if (result.StoppedReason is { } reason)
+        {
+            await HandleStopAsync(job, payload.IdeaId, reason, progress, cancellationToken);
+            return;
+        }
+
+        await progress.CompleteAsync(
+            result.NewStatus is { } status
+                ? $"⚖️ Appeal #{payload.IdeaId} · OVERTURNED → {status}"
+                : $"⚖️ Appeal #{payload.IdeaId} · verdict upheld",
+            CancellationToken.None);
+        await notifier.SendAsync(result.Html, cancellationToken);
+    }
+
+    private async Task ExecutePartnerAsync(JobEntity job, CancellationToken cancellationToken)
+    {
+        var payload = JsonSerializer.Deserialize<PartnerJobPayload>(job.PayloadJson, LlmJson.Options)
+            ?? throw new InvalidOperationException("partner payload unreadable");
+        var progress = await progressNotifier.StartAsync(
+            $"🤝 Partner (job #{job.Id}) · reading #{payload.IdeaId}'s full trail…",
+            job.OriginMessageId,
+            cancellationToken);
+        await SaveProgressIdAsync(job.Id, progress.MessageId, cancellationToken);
+
+        using var scope = scopeFactory.CreateScope();
+        var partner = scope.ServiceProvider.GetRequiredService<IdeaEngine.Infrastructure.Research.PartnerService>();
+        var result = await partner.RunAsync(payload.IdeaId, cancellationToken);
+        if (result.StoppedReason is { } reason)
+        {
+            await HandleStopAsync(job, payload.IdeaId, reason, progress, cancellationToken);
+            return;
+        }
+
+        await progress.CompleteAsync($"🤝 Partner take on #{payload.IdeaId} ↓", CancellationToken.None);
+        await notifier.SendAsync(result.Html, cancellationToken);
+    }
+
     private async Task MaybeAutoAppealAsync(
         IdeaEngine.Infrastructure.Research.ResearchRunResult result, CancellationToken cancellationToken)
     {
@@ -434,15 +506,12 @@ internal sealed class JobRunnerHostedService(
                 return;
             }
 
+            var jobs = scope.ServiceProvider.GetRequiredService<JobService>();
+            var (appealJobId, _) = await jobs.EnqueueAsync(
+                "appeal", new AppealJobPayload(result.IdeaId), null, cancellationToken);
             await notifier.SendAsync(
-                $"⚖️ Auto-appeal for #{result.IdeaId}: killed despite ⭐{result.Score * 100:F0}% — second opinion running…",
-                cancellationToken);
-            var appeal = scope.ServiceProvider.GetRequiredService<IdeaEngine.Infrastructure.Research.AppealService>();
-            var appealResult = await appeal.RunAsync(result.IdeaId, cancellationToken);
-            await notifier.SendAsync(
-                appealResult.StoppedReason is { } reason
-                    ? $"⚖️ Auto-appeal #{result.IdeaId} ⛔ {reason}"
-                    : appealResult.Html,
+                $"⚖️ Auto-appeal queued (light lane, job #{appealJobId}) for #{result.IdeaId}: " +
+                $"killed despite ⭐{result.Score * 100:F0}%.",
                 cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

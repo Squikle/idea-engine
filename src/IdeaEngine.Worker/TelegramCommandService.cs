@@ -122,6 +122,7 @@ internal sealed class TelegramCommandService(
                 new BotCommand { Command = "kill", Description = "your verdict: dismiss an idea" },
                 new BotCommand { Command = "promote", Description = "your verdict: mark an idea hot" },
                 new BotCommand { Command = "ideas", Description = "recent ideas (live and killed)" },
+                new BotCommand { Command = "signal", Description = "one signal's full lineage card" },
                 new BotCommand { Command = "advise", Description = "AI reviews our own pipeline for gaps" },
                 new BotCommand { Command = "config", Description = "current configuration" },
                 new BotCommand { Command = "help", Description = "command list" },
@@ -193,7 +194,8 @@ internal sealed class TelegramCommandService(
             {
                 "status" => await SendStatusAsync(cancellationToken),
                 "top" => await BuildTopAsync(cancellationToken),
-                "signals" => await BuildSignalsAsync(cancellationToken),
+                "signals" => await SendSignalsPageAsync(argument, cancellationToken),
+                "signal" => await BuildSignalDetailAsync(argument, cancellationToken),
                 "best" => await BuildBestAsync(argument, cancellationToken),
                 "idea" => await SendIdeaDetailAsync(argument, cancellationToken),
                 "costs" => await BuildCostsAsync(cancellationToken),
@@ -223,7 +225,7 @@ internal sealed class TelegramCommandService(
                 "ideas" => await SendIdeasPageAsync(argument, cancellationToken),
                 "queue" => await SendQueueAsync(cancellationToken),
                 "cancel" => await CancelJobAsync(argument, cancellationToken),
-                "config" => BuildConfig(),
+                "config" => await HandleConfigAsync(argument, cancellationToken),
                 "help" or "start" => BuildHelp(),
                 _ => $"Unknown command: /{command} — try /help",
             };
@@ -393,49 +395,287 @@ internal sealed class TelegramCommandService(
         return builder.ToString().TrimEnd();
     }
 
-    private async Task<string> BuildSignalsAsync(CancellationToken cancellationToken)
+    private static readonly string[] SignalFilters = ["all", "pain", "wish", "trend", "mine", "unused", "used"];
+
+    private async Task<string> SendSignalsPageAsync(string? argument, CancellationToken cancellationToken)
     {
+        var filter = argument?.Trim().ToLowerInvariant() switch
+        {
+            "pain" => "pain",
+            "wish" => "wish",
+            "trend" => "trend",
+            "mine" => "mine",
+            "unused" => "unused",
+            "used" => "used",
+            _ => "all",
+        };
+        var (text, keyboard) = await BuildSignalsPageAsync(filter, 1, "value", group: false, cancellationToken);
+        await _bot!.SendMessage(
+            chatId: _adminChatId,
+            text: text,
+            parseMode: ParseMode.Html,
+            linkPreviewOptions: Telegram.Bot.Types.LinkPreviewOptions.Disabled,
+            replyMarkup: keyboard,
+            cancellationToken: cancellationToken);
+        return string.Empty;
+    }
+
+    /// <summary>EvidenceJson reverse map: which idea consumed which signal.</summary>
+    private static Dictionary<long, (long IdeaId, string Status)> BuildSignalConsumerMap(
+        IEnumerable<(long Id, string Status, string? EvidenceJson)> ideas)
+    {
+        var map = new Dictionary<long, (long, string)>();
+        foreach (var (ideaId, status, evidenceJson) in ideas)
+        {
+            foreach (var signalId in IdeaJson.ParseEvidence(evidenceJson))
+            {
+                map.TryAdd(signalId, (ideaId, status));
+            }
+        }
+
+        return map;
+    }
+
+    private async Task<(string Text, InlineKeyboardMarkup Keyboard)> BuildSignalsPageAsync(
+        string filter, int page, string sort, bool group, CancellationToken cancellationToken)
+    {
+        const int pageSize = 10;
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
 
-        var signals = await db.Signals
+        var rows = await db.Signals
             .OrderByDescending(s => s.Id)
-            .Take(12)
+            .Take(600)
             .Select(s => new
             {
+                s.Id,
                 s.Kind,
                 s.Summary,
+                s.Glance,
                 s.CommercialSentiment,
                 s.Confidence,
-                s.RawItem!.Url,
-                s.RawItem.Source,
+                s.Novelty,
+                s.CreatedAt,
+                Source = s.RawItem!.Source,
             })
             .ToListAsync(cancellationToken);
 
-        if (signals.Count == 0)
-        {
-            return "No signals extracted yet — triage may still be draining the queue (/status).";
-        }
+        var consumers = BuildSignalConsumerMap((await db.Ideas
+                .OrderByDescending(i => i.Id)
+                .Take(400)
+                .Select(i => new { i.Id, i.Status, i.EvidenceJson })
+                .ToListAsync(cancellationToken))
+            .Select(i => (i.Id, i.Status, i.EvidenceJson)));
 
-        var builder = new StringBuilder("<b>🎯 Latest signals</b>\n");
-        foreach (var signal in signals)
-        {
-            builder.Append("• ").Append(IdeaEngine.Core.Common.Ui.Kind(signal.Kind)).Append(' ')
-                .Append(System.Net.WebUtility.HtmlEncode(signal.Summary));
-
-            builder.Append(" <i>(").Append(signal.CommercialSentiment.Replace('_', ' '))
-                .Append(", ").Append((signal.Confidence * 100).ToString("F0", CultureInfo.InvariantCulture))
-                .Append("%)</i>");
-
-            if (signal.Url is { Length: > 0 })
+        var scored = rows
+            .Select(s => new
             {
-                builder.Append(" <a href=\"").Append(signal.Url).Append("\">[").Append(signal.Source).Append("]</a>");
+                s.Id,
+                s.Kind,
+                Text = s.Glance is { Length: > 0 } ? s.Glance : s.Summary,
+                s.CreatedAt,
+                s.Source,
+                Value = IdeaEngine.Core.Pipeline.SignalScoring.Value(s.Confidence, s.Novelty, s.CommercialSentiment),
+                Consumer = consumers.TryGetValue(s.Id, out var c) ? c : ((long, string)?)null,
+            })
+            .ToList();
+
+        var selected = filter switch
+        {
+            "pain" => scored.Where(x => x.Kind is "pain" or "complaint"),
+            "wish" => scored.Where(x => x.Kind is "wish" or "demand"),
+            "trend" => scored.Where(x => x.Kind == "trend"),
+            "mine" => scored.Where(x => x.Source == IdeaEngine.Core.Sources.SourceKind.AiMine),
+            "unused" => scored.Where(x => x.Consumer is null),
+            "used" => scored.Where(x => x.Consumer is not null),
+            _ => scored.AsEnumerable(),
+        };
+
+        var filtered = sort == "new"
+            ? selected.OrderByDescending(x => x.Id).ToList()
+            : selected.OrderByDescending(x => x.Value).ThenByDescending(x => x.Id).ToList();
+
+        var pages = Math.Max(1, (filtered.Count + pageSize - 1) / pageSize);
+        page = Math.Clamp(page, 1, pages);
+        var slice = filtered.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+
+        var builder = new StringBuilder();
+        builder.Append("<b>🎯 Signals · ").Append(filter).Append("</b> — ").Append(filtered.Count)
+            .Append(" of last 600 · by ").Append(sort == "new" ? "newest" : "value").Append('\n');
+        builder.Append("<i>tap s-ids for lineage · /ideate from N M builds from chosen ones</i>\n\n");
+
+        DateOnly? lastDay = null;
+        foreach (var entry in slice)
+        {
+            if (group)
+            {
+                var day = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(entry.CreatedAt, timeZone).Date);
+                if (day != lastDay)
+                {
+                    lastDay = day;
+                    builder.Append("— <i>").Append(DayLabel(day)).Append("</i> —\n");
+                }
+            }
+
+            builder.Append(IdeaEngine.Core.Common.Ui.Cmd("signal", entry.Id))
+                .Append(" <code>").Append(((entry.Value * 100).ToString("F0", CultureInfo.InvariantCulture) + "%").PadLeft(4))
+                .Append("</code> ").Append(IdeaEngine.Core.Common.Ui.Kind(entry.Kind)).Append(' ')
+                .Append(System.Net.WebUtility.HtmlEncode(IdeaEngine.Core.Common.TextClip.Clip(entry.Text, 80)));
+            if (entry.Source == IdeaEngine.Core.Sources.SourceKind.AiMine)
+            {
+                builder.Append(" ⛏");
+            }
+
+            if (entry.Consumer is { } consumer)
+            {
+                builder.Append(" → ").Append(IdeaEngine.Core.Common.Ui.IdeaStatus(consumer.Item2))
+                    .Append('#').Append(consumer.Item1);
             }
 
             builder.Append('\n');
         }
 
-        return builder.ToString().TrimEnd();
+        if (slice.Count == 0)
+        {
+            builder.Append("<i>nothing here</i>\n");
+        }
+
+        var filterRow = SignalFilters
+            .Select(f => InlineKeyboardButton.WithCallbackData(
+                (f == filter ? "• " : string.Empty) + f, $"sigs|{f}|1|{sort}|{(group ? 1 : 0)}"))
+            .ToArray();
+        var navRow = new List<InlineKeyboardButton>();
+        if (page > 1)
+        {
+            navRow.Add(InlineKeyboardButton.WithCallbackData("⬅️", $"sigs|{filter}|{page - 1}|{sort}|{(group ? 1 : 0)}"));
+        }
+
+        navRow.Add(InlineKeyboardButton.WithCallbackData($"{page}/{pages}", $"sigs|{filter}|{page}|{sort}|{(group ? 1 : 0)}"));
+        if (page < pages)
+        {
+            navRow.Add(InlineKeyboardButton.WithCallbackData("➡️", $"sigs|{filter}|{page + 1}|{sort}|{(group ? 1 : 0)}"));
+        }
+
+        navRow.Add(sort == "new"
+            ? InlineKeyboardButton.WithCallbackData("💎 by value", $"sigs|{filter}|1|value|{(group ? 1 : 0)}")
+            : InlineKeyboardButton.WithCallbackData("🕐 newest", $"sigs|{filter}|1|new|{(group ? 1 : 0)}"));
+        navRow.Add(InlineKeyboardButton.WithCallbackData(group ? "📅 off" : "📅 group", $"sigs|{filter}|1|{sort}|{(group ? 0 : 1)}"));
+
+        return (builder.ToString().TrimEnd(), new InlineKeyboardMarkup(
+        [
+            filterRow[..4],
+            filterRow[4..],
+            [.. navRow],
+        ]));
+    }
+
+    private string DayLabel(DateOnly day)
+    {
+        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(timeProvider.GetUtcNow(), timeZone).Date);
+        return day == today ? "today"
+            : day == today.AddDays(-1) ? "yesterday"
+            : day.ToString(day.Year == today.Year ? "MMM d" : "MMM d yyyy", CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>The lineage card: signal → its source process → its consumers.</summary>
+    private async Task<string> BuildSignalDetailAsync(string? argument, CancellationToken cancellationToken)
+    {
+        if (!long.TryParse(argument?.Trim().Split(' ')[0], out var signalId))
+        {
+            return "Usage: /signal 123 — full lineage of one signal (/signals to browse)";
+        }
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
+        var signal = await db.Signals
+            .Where(s => s.Id == signalId)
+            .Select(s => new
+            {
+                s.Id,
+                s.Kind,
+                s.Summary,
+                s.Glance,
+                s.Audience,
+                s.CommercialSentiment,
+                s.Confidence,
+                s.Novelty,
+                s.Model,
+                s.CreatedAt,
+                RawSource = s.RawItem!.Source,
+                RawCommunity = s.RawItem.Community,
+                RawUrl = s.RawItem.Url,
+                RawTitle = s.RawItem.Title,
+                RawScore = s.RawItem.Score,
+                RawComments = s.RawItem.CommentCount,
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (signal is null)
+        {
+            return $"No signal s{signalId}.";
+        }
+
+        var value = IdeaEngine.Core.Pipeline.SignalScoring.Value(signal.Confidence, signal.Novelty, signal.CommercialSentiment);
+        var builder = new StringBuilder();
+        builder.Append("🎯 <b>Signal s").Append(signal.Id).Append("</b> · ")
+            .Append(IdeaEngine.Core.Common.Ui.Kind(signal.Kind)).Append(' ').Append(signal.Kind)
+            .Append(" · 💎 ").Append((value * 100).ToString("F0", CultureInfo.InvariantCulture)).Append("%\n\n")
+            .Append(System.Net.WebUtility.HtmlEncode(signal.Summary)).Append('\n');
+        if (signal.Audience is { Length: > 0 })
+        {
+            builder.Append("👥 ").Append(System.Net.WebUtility.HtmlEncode(signal.Audience)).Append('\n');
+        }
+
+        builder.Append("<i>").Append(signal.CommercialSentiment.Replace('_', ' '))
+            .Append(" · confidence ").Append((signal.Confidence * 100).ToString("F0", CultureInfo.InvariantCulture))
+            .Append("% · novelty ").Append((signal.Novelty * 100).ToString("F0", CultureInfo.InvariantCulture))
+            .Append("% · ").Append(signal.Model).Append("</i>\n");
+
+        builder.Append("\n<b>⬅️ Born from</b>\n");
+        if (signal.RawSource == IdeaEngine.Core.Sources.SourceKind.AiMine)
+        {
+            builder.Append("⛏ /mine angle <b>").Append(System.Net.WebUtility.HtmlEncode(signal.RawCommunity ?? "?"))
+                .Append("</b>\n<i>").Append(System.Net.WebUtility.HtmlEncode(signal.RawTitle)).Append("</i>\n");
+        }
+        else
+        {
+            builder.Append(signal.RawSource.ToString()).Append(" · ")
+                .Append(System.Net.WebUtility.HtmlEncode(signal.RawCommunity ?? "-"))
+                .Append(" · score ").Append(signal.RawScore).Append(" · ").Append(signal.RawComments).Append(" comments\n")
+                .Append(System.Net.WebUtility.HtmlEncode(IdeaEngine.Core.Common.TextClip.Clip(signal.RawTitle, 120)));
+            if (signal.RawUrl is { Length: > 0 })
+            {
+                builder.Append(" <a href=\"").Append(signal.RawUrl).Append("\">[open]</a>");
+            }
+
+            builder.Append('\n');
+        }
+
+        var consumerIdeas = (await db.Ideas
+                .OrderByDescending(i => i.Id)
+                .Take(400)
+                .Select(i => new { i.Id, i.Title, i.Status, i.EvidenceJson })
+                .ToListAsync(cancellationToken))
+            .Where(i => IdeaJson.ParseEvidence(i.EvidenceJson).Contains(signal.Id))
+            .ToList();
+        builder.Append("\n<b>➡️ Consumed by</b>\n");
+        if (consumerIdeas.Count == 0)
+        {
+            builder.Append("<i>no idea yet — /ideate from ").Append(signal.Id).Append(" uses it directly</i>\n");
+        }
+        else
+        {
+            foreach (var idea in consumerIdeas)
+            {
+                builder.Append(IdeaEngine.Core.Common.Ui.IdeaStatus(idea.Status)).Append(' ')
+                    .Append(IdeaEngine.Core.Common.Ui.Cmd("idea", idea.Id)).Append(' ')
+                    .Append(System.Net.WebUtility.HtmlEncode(IdeaEngine.Core.Common.TextClip.Clip(idea.Title, 60)))
+                    .Append('\n');
+            }
+        }
+
+        builder.Append("\n<i>").Append(DayLabel(DateOnly.FromDateTime(
+            TimeZoneInfo.ConvertTime(signal.CreatedAt, timeZone).Date))).Append("</i>");
+        return builder.ToString();
     }
 
     private async Task<string> BuildCostsAsync(CancellationToken cancellationToken)
@@ -588,10 +828,68 @@ internal sealed class TelegramCommandService(
 
     private string StartIdeate(string? argument)
     {
+        var tokens = (argument ?? string.Empty)
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        // Explicit-control mode: /ideate from 12 45 [playbook] - exactly those signals.
+        if (tokens.Length > 1 && tokens[0].Equals("from", StringComparison.OrdinalIgnoreCase))
+        {
+            var signalIds = tokens[1..]
+                .Where(t => long.TryParse(t, out _))
+                .Select(long.Parse)
+                .Distinct()
+                .Take(8)
+                .ToList();
+            var fromPlaybook = tokens[1..].FirstOrDefault(t =>
+                !long.TryParse(t, out _) && IdeaEngine.Core.Pipeline.Playbooks.TryGet(t, out _));
+            if (signalIds.Count == 0)
+            {
+                return "Usage: /ideate from 12 45 [playbook] — builds ONE idea from exactly those signals (/signals to browse)";
+            }
+
+            if (!OperationGates.Ideation.Wait(0))
+            {
+                return "Ideation is already running — try again when it finishes.";
+            }
+
+            _ = Task.Run(
+                async () =>
+                {
+                    try
+                    {
+                        var progress = await progressNotifier.StartAsync(
+                            $"💡 Ideation · from your chosen signals: {string.Join(", ", signalIds.Select(i => $"s{i}"))}…",
+                            CancellationToken.None);
+                        using var scope = scopeFactory.CreateScope();
+                        var ideation = scope.ServiceProvider.GetRequiredService<IdeationService>();
+                        var result = await ideation.RunFromSignalsAsync(signalIds, fromPlaybook, progress, CancellationToken.None);
+                        await progress.CompleteAsync(
+                            result.StoppedReason is { } why
+                                ? $"💡 ⛔ {why}"
+                                : $"💡 done · {result.Advanced} live · {result.Killed} killed · ${result.CostUsd.ToString("F2", CultureInfo.InvariantCulture)}",
+                            CancellationToken.None);
+                        if (result.Lines.Count > 0)
+                        {
+                            await notifier.SendAsync(string.Join('\n', result.Lines), CancellationToken.None);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex, "Ideate-from failed");
+                        await notifier.SendAsync("💡 ideation from signals crashed — check logs.", CancellationToken.None);
+                    }
+                    finally
+                    {
+                        OperationGates.Ideation.Release();
+                    }
+                },
+                CancellationToken.None);
+            return string.Empty;
+        }
+
         var count = 1;
         string? playbookKey = null;
-        foreach (var token in (argument ?? string.Empty)
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        foreach (var token in tokens)
         {
             if (int.TryParse(token, out var parsedCount))
             {
@@ -603,7 +901,7 @@ internal sealed class TelegramCommandService(
             }
             else
             {
-                return $"Unknown playbook '{token}' — /playbooks lists them. Usage: /ideate 3 nostalgia";
+                return $"Unknown playbook '{token}' — /playbooks lists them. Usage: /ideate 3 nostalgia · /ideate from 12 45";
             }
         }
 
@@ -900,7 +1198,7 @@ internal sealed class TelegramCommandService(
             _ => "top",
         };
 
-        var (text, keyboard) = await BuildIdeasPageAsync(filter, 1, DefaultSort(filter), cancellationToken);
+        var (text, keyboard) = await BuildIdeasPageAsync(filter, 1, DefaultSort(filter), DefaultGroup(filter), cancellationToken);
         await _bot!.SendMessage(
             chatId: _adminChatId,
             text: text,
@@ -1094,11 +1392,30 @@ internal sealed class TelegramCommandService(
                 return;
             }
 
+            if (parts.Length >= 5 && parts[0] == "sigs")
+            {
+                var sigPage = int.TryParse(parts[2], out var sp) ? sp : 1;
+                var sigSort = parts[3] == "new" ? "new" : "value";
+                var sigGroup = parts[4] == "1";
+                var (sigText, sigKeyboard) = await BuildSignalsPageAsync(parts[1], sigPage, sigSort, sigGroup, cancellationToken);
+                await _bot!.EditMessageText(
+                    chatId: _adminChatId,
+                    messageId: message.MessageId,
+                    text: sigText,
+                    parseMode: ParseMode.Html,
+                    linkPreviewOptions: Telegram.Bot.Types.LinkPreviewOptions.Disabled,
+                    replyMarkup: sigKeyboard,
+                    cancellationToken: cancellationToken);
+                await _bot!.AnswerCallbackQuery(callback.Id, cancellationToken: cancellationToken);
+                return;
+            }
+
             if (parts.Length >= 3 && parts[0] == "ideas")
             {
                 var page = int.TryParse(parts[2], out var parsed) ? parsed : 1;
                 var ideasSort = parts.Length >= 4 && parts[3] == "new" ? "new" : parts.Length >= 4 ? "score" : DefaultSort(parts[1]);
-                var (text, keyboard) = await BuildIdeasPageAsync(parts[1], page, ideasSort, cancellationToken);
+                var ideasGroup = parts.Length >= 5 ? parts[4] == "1" : DefaultGroup(parts[1]);
+                var (text, keyboard) = await BuildIdeasPageAsync(parts[1], page, ideasSort, ideasGroup, cancellationToken);
                 await _bot!.EditMessageText(
                     chatId: _adminChatId,
                     messageId: message.MessageId,
@@ -1125,8 +1442,11 @@ internal sealed class TelegramCommandService(
     private static string DefaultSort(string filter) =>
         filter is "all" or "dead" ? "new" : "score";
 
+    /// <summary>Timeline views start grouped by day; score views stay flat (owner's choice).</summary>
+    private static bool DefaultGroup(string filter) => filter is "fresh" or "all";
+
     private async Task<(string Text, InlineKeyboardMarkup Keyboard)> BuildIdeasPageAsync(
-        string filter, int page, string sort, CancellationToken cancellationToken)
+        string filter, int page, string sort, bool group, CancellationToken cancellationToken)
     {
         const int pageSize = 8;
         using var scope = scopeFactory.CreateScope();
@@ -1211,8 +1531,19 @@ internal sealed class TelegramCommandService(
             builder.Append("<i>nothing here yet</i>\n");
         }
 
+        DateOnly? previousDay = null;
         foreach (var entry in slice)
         {
+            if (group)
+            {
+                var day = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(entry.Idea.CreatedAt, timeZone).Date);
+                if (day != previousDay)
+                {
+                    previousDay = day;
+                    builder.Append("— <i>").Append(DayLabel(day)).Append("</i> —\n");
+                }
+            }
+
             var id = ('#' + entry.Idea.Id.ToString(CultureInfo.InvariantCulture)).PadRight(4);
             var pct = ((entry.Score.Total * 100).ToString("F0", CultureInfo.InvariantCulture) + "%")
                 .PadLeft(4) + (entry.Score.Source == "research" ? "⭐" : "≈");
@@ -1246,26 +1577,29 @@ internal sealed class TelegramCommandService(
                 .Append(IdeaEngine.Core.Common.Ui.Cmd("appeal", first));
         }
 
+        var groupFlag = group ? 1 : 0;
         var filterRow = IdeaFilters
             .Select(f => InlineKeyboardButton.WithCallbackData(
-                (f == filter ? "• " : string.Empty) + FilterButton(f), $"ideas|{f}|1|{DefaultSort(f)}"))
+                (f == filter ? "• " : string.Empty) + FilterButton(f), $"ideas|{f}|1|{DefaultSort(f)}|{(DefaultGroup(f) ? 1 : 0)}"))
             .ToArray();
 
         var navRow = new List<InlineKeyboardButton>();
         if (page > 1)
         {
-            navRow.Add(InlineKeyboardButton.WithCallbackData("⬅️", $"ideas|{filter}|{page - 1}|{sort}"));
+            navRow.Add(InlineKeyboardButton.WithCallbackData("⬅️", $"ideas|{filter}|{page - 1}|{sort}|{groupFlag}"));
         }
 
-        navRow.Add(InlineKeyboardButton.WithCallbackData($"{page}/{pages}", $"ideas|{filter}|{page}|{sort}"));
+        navRow.Add(InlineKeyboardButton.WithCallbackData($"{page}/{pages}", $"ideas|{filter}|{page}|{sort}|{groupFlag}"));
         if (page < pages)
         {
-            navRow.Add(InlineKeyboardButton.WithCallbackData("➡️", $"ideas|{filter}|{page + 1}|{sort}"));
+            navRow.Add(InlineKeyboardButton.WithCallbackData("➡️", $"ideas|{filter}|{page + 1}|{sort}|{groupFlag}"));
         }
 
         navRow.Add(sort == "new"
-            ? InlineKeyboardButton.WithCallbackData("⭐ by score", $"ideas|{filter}|1|score")
-            : InlineKeyboardButton.WithCallbackData("🕐 newest", $"ideas|{filter}|1|new"));
+            ? InlineKeyboardButton.WithCallbackData("⭐ by score", $"ideas|{filter}|1|score|{groupFlag}")
+            : InlineKeyboardButton.WithCallbackData("🕐 newest", $"ideas|{filter}|1|new|{groupFlag}"));
+        navRow.Add(InlineKeyboardButton.WithCallbackData(
+            group ? "📅 off" : "📅 group", $"ideas|{filter}|1|{sort}|{(group ? 0 : 1)}"));
 
         var keyboard = new InlineKeyboardMarkup(
         [
@@ -1345,7 +1679,7 @@ internal sealed class TelegramCommandService(
         var doneToday = await db.Jobs.CountAsync(
             j => j.Status == "done" && j.UpdatedAt >= now.AddHours(-24), cancellationToken);
 
-        var builder = new StringBuilder("<b>📋 Queue</b>\n");
+        var builder = new StringBuilder("<b>📋 Queue</b> <i>(🏋️ heavy ∥ 🪶 light — lanes run in parallel)</i>\n");
         if (active.Count == 0)
         {
             builder.Append("😴 empty — nothing running or waiting\n");
@@ -1363,7 +1697,8 @@ internal sealed class TelegramCommandService(
         {
             position++;
             var marker = job.Status == "running" ? "▶️" : $"{position}.";
-            builder.Append(marker).Append(" <b>#").Append(job.Id).Append("</b> ")
+            var lane = job.Kind is "appeal" or "partner" ? "🪶" : "🏋️";
+            builder.Append(marker).Append(' ').Append(lane).Append(" <b>#").Append(job.Id).Append("</b> ")
                 .Append(job.Kind).Append(' ').Append(JobLabel(job))
                 .Append(job.Status == "running"
                     ? $" · running {(now - job.UpdatedAt).TotalMinutes:F0}m"
@@ -1656,11 +1991,30 @@ internal sealed class TelegramCommandService(
         return $"🗒 Note added to #{ideaId} ({notes.Count} total). Injected into the next /research{ideaId} — the judge must address it. ⌛ the idea now counts as stale.";
     }
 
-    private string StartPartner(string? argument)
+
+    private static List<long> ParseIdList(string? argument) =>
+        [.. (argument ?? string.Empty)
+            .Split([' ', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(t => long.TryParse(t, out var id) ? id : 0)
+            .Where(id => id > 0)
+            .Distinct()
+            .Take(10)]; 
+
+    private string StartAppeal(string? argument) =>
+        EnqueueLightJobs("appeal", "⚖️", argument,
+            "Usage: /appeal 5 — or several: /appeal 55 56 58 (queued in order, light lane)");
+
+    private string StartPartner(string? argument) =>
+        EnqueueLightJobs("partner", "🤝", argument,
+            "Usage: /partner 5 — or several: /partner 69 24 (queued in order, light lane)");
+
+    /// <summary>Appeal/partner ride the LIGHT lane: durable, cancellable, never behind research.</summary>
+    private string EnqueueLightJobs(string kind, string emoji, string? argument, string usage)
     {
-        if (!long.TryParse(argument?.Trim(), out var partnerIdeaId))
+        var ids = ParseIdList(argument);
+        if (ids.Count == 0)
         {
-            return "Usage: /partner 5 — the right-hand take: worth your weekend or not, in ten lines";
+            return usage;
         }
 
         _ = Task.Run(
@@ -1668,90 +2022,63 @@ internal sealed class TelegramCommandService(
             {
                 try
                 {
-                    var progress = await progressNotifier.StartAsync(
-                        $"🤝 Partner · reading #{partnerIdeaId}'s full trail…", CancellationToken.None);
+                    var ack = await _bot!.SendMessage(
+                        chatId: _adminChatId, text: $"{emoji} queuing…", cancellationToken: CancellationToken.None);
                     using var scope = scopeFactory.CreateScope();
-                    var partner = scope.ServiceProvider
-                        .GetRequiredService<IdeaEngine.Infrastructure.Research.PartnerService>();
-                    var result = await partner.RunAsync(partnerIdeaId, CancellationToken.None);
-                    if (result.StoppedReason is { } reason)
+                    var jobs = scope.ServiceProvider.GetRequiredService<JobService>();
+                    var lines = new List<string>();
+                    foreach (var ideaId in ids)
                     {
-                        await progress.CompleteAsync($"🤝 Partner #{partnerIdeaId} ⛔ {reason}", CancellationToken.None);
-                        return;
+                        object payload = kind == "appeal"
+                            ? new AppealJobPayload(ideaId)
+                            : new PartnerJobPayload(ideaId);
+                        var (jobId, _) = await jobs.EnqueueAsync(kind, payload, ack.MessageId, CancellationToken.None);
+                        lines.Add($"{emoji} job <b>#{jobId}</b> · idea #{ideaId} ({IdeaEngine.Core.Common.Ui.Cmd("idea", ideaId)})");
                     }
 
-                    await progress.CompleteAsync($"🤝 Partner take on #{partnerIdeaId} ↓", CancellationToken.None);
-                    await notifier.SendAsync(result.Html, CancellationToken.None);
+                    await _bot!.EditMessageText(
+                        chatId: _adminChatId,
+                        messageId: ack.MessageId,
+                        text: string.Join('\n', lines) + "\n<i>light lane — runs alongside research. /queue for overview.</i>",
+                        parseMode: ParseMode.Html,
+                        cancellationToken: CancellationToken.None);
                 }
                 catch (Exception ex)
                 {
-                    logger.LogError(ex, "Partner failed for idea {IdeaId}", partnerIdeaId);
-                    await notifier.SendAsync("🤝 Partner crashed — check logs.", CancellationToken.None);
+                    logger.LogError(ex, "Queueing {Kind} failed", kind);
+                    await notifier.SendAsync($"{emoji} queueing failed — check logs.", CancellationToken.None);
                 }
             },
             CancellationToken.None);
-        return $"🤝 partner thinking about #{partnerIdeaId}…";
-    }
-
-    private string StartAppeal(string? argument)
-    {
-        if (!long.TryParse(argument, out var ideaId))
-        {
-            return "Usage: /appeal 5 — a stronger model reviews the verdict for fairness/depth";
-        }
-
-        _ = Task.Run(
-            async () =>
-            {
-                try
-                {
-                    var progress = await progressNotifier.StartAsync(
-                        $"⚖️ Appeal #{ideaId} · opus-class review of the verdict…", CancellationToken.None);
-                    using var scope = scopeFactory.CreateScope();
-                    var appeal = scope.ServiceProvider.GetRequiredService<IdeaEngine.Infrastructure.Research.AppealService>();
-                    var result = await appeal.RunAsync(ideaId, CancellationToken.None);
-                    if (result.StoppedReason is { } reason)
-                    {
-                        await progress.CompleteAsync($"⚖️ Appeal #{ideaId} ⛔ {reason}", CancellationToken.None);
-                        return;
-                    }
-
-                    await progress.CompleteAsync(
-                        result.NewStatus is { } status
-                            ? $"⚖️ Appeal #{ideaId} · OVERTURNED → {status}"
-                            : $"⚖️ Appeal #{ideaId} · verdict upheld",
-                        CancellationToken.None);
-                    await notifier.SendAsync(result.Html, CancellationToken.None);
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, "Appeal failed for idea {IdeaId}", ideaId);
-                    await notifier.SendAsync("⚖️ Appeal crashed — check logs.", CancellationToken.None);
-                }
-            },
-            CancellationToken.None);
-
         return string.Empty;
     }
 
     private async Task<string> VerifyIdeaAsync(string? argument, CancellationToken cancellationToken)
     {
-        if (!long.TryParse(argument, out var ideaId))
+        var ids = ParseIdList(argument);
+        if (ids.Count == 0)
         {
-            return "Usage: /verify 5 — marks the idea as personally reviewed (hides from default list)";
+            return "Usage: /verify 5 — or several: /verify 5 6 7 (marks reviewed, hides from default list)";
         }
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
-        var idea = await db.Ideas.FindAsync([ideaId], cancellationToken);
-        if (idea is null)
+        var lines = new List<string>();
+        foreach (var ideaId in ids)
         {
-            return $"No idea #{ideaId}.";
+            var idea = await db.Ideas.FindAsync([ideaId], cancellationToken);
+            if (idea is null)
+            {
+                lines.Add($"⛔ no idea #{ideaId}");
+                continue;
+            }
+
+            idea.Verified = true;
+            lines.Add($"✅ #{ideaId} verified");
         }
 
-        idea.Verified = true;
         await db.SaveChangesAsync(cancellationToken);
-        return $"✅ #{ideaId} marked verified — hidden from the default list (see ✅ tab).";
+        return string.Join('\n', lines) + "\n<i>hidden from the default list (see ✅ tab)</i>";
     }
 
     private async Task<string> BumpBudgetAsync(CancellationToken cancellationToken)
@@ -1771,26 +2098,33 @@ internal sealed class TelegramCommandService(
     private async Task<string> SetIdeaStatusAsync(
         string? argument, string newStatus, CancellationToken cancellationToken)
     {
-        if (!long.TryParse(argument, out var ideaId))
+        var ids = ParseIdList(argument);
+        if (ids.Count == 0)
         {
-            return $"Usage: /{(newStatus == "hot" ? "promote" : "kill")} 5";
+            return $"Usage: /{(newStatus == "hot" ? "promote" : "kill")} 5 — or several ids space-separated";
         }
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
-        var idea = await db.Ideas.FindAsync([ideaId], cancellationToken);
-        if (idea is null)
+        var lines = new List<string>();
+        foreach (var ideaId in ids)
         {
-            return $"No idea #{ideaId}.";
+            var idea = await db.Ideas.FindAsync([ideaId], cancellationToken);
+            if (idea is null)
+            {
+                lines.Add($"⛔ no idea #{ideaId}");
+                continue;
+            }
+
+            var previous = idea.Status;
+            idea.Status = newStatus;
+            lines.Add($"{IdeaEngine.Core.Common.Ui.IdeaStatus(newStatus)} #{ideaId} " +
+                $"{System.Net.WebUtility.HtmlEncode(idea.Title.Length > 60 ? idea.Title[..59] + "…" : idea.Title)}" +
+                $" — {previous} → <b>{newStatus}</b>");
         }
 
-        var previous = idea.Status;
-        idea.Status = newStatus;
         await db.SaveChangesAsync(cancellationToken);
-
-        return $"{IdeaEngine.Core.Common.Ui.IdeaStatus(newStatus)} #{ideaId} " +
-            $"{System.Net.WebUtility.HtmlEncode(idea.Title.Length > 60 ? idea.Title[..59] + "…" : idea.Title)}" +
-            $" — {previous} → <b>{newStatus}</b> (your call, recorded)";
+        return string.Join('\n', lines) + "\n<i>your call, recorded</i>";
     }
 
     private async Task<string> BuildBestAsync(string? argument, CancellationToken cancellationToken)
@@ -2141,14 +2475,12 @@ internal sealed class TelegramCommandService(
                 return $"✅ {write.Stage} → {write.Model}";
             }
 
-            case "set_setting" when write.Key is "sessions_per_day" or "auto_research_top" or "min_rating_for_research"
-                && write.Value is { Length: > 0 }:
+            case "set_setting" when write.Key is { Length: > 0 } && write.Value is { Length: > 0 }
+                && IdeaEngine.Infrastructure.Autopilot.SettingsCatalog.Find(write.Key) is { } spec:
             {
-                if (write.Key == "min_rating_for_research"
-                    ? !double.TryParse(write.Value, NumberStyles.Any, CultureInfo.InvariantCulture, out _)
-                    : !int.TryParse(write.Value, out _))
+                if (IdeaEngine.Infrastructure.Autopilot.SettingsCatalog.Validate(spec, write.Value) is { } problem)
                 {
-                    return $"⛔ {write.Key}: '{write.Value}' is not a number";
+                    return $"⛔ {write.Key}: {problem} (allowed: {spec.Allowed})";
                 }
 
                 var key = "setting." + write.Key;
@@ -2424,6 +2756,61 @@ internal sealed class TelegramCommandService(
                 : $"{stage} had no override.";
         }
 
+        if (tokens.Length >= 1 && tokens[0].Equals("available", StringComparison.OrdinalIgnoreCase))
+        {
+            var chatClient = scope.ServiceProvider.GetRequiredService<IdeaEngine.Infrastructure.Ai.OpenRouterChatClient>();
+            var catalog = await chatClient.ListModelsAsync(cancellationToken);
+            if (catalog is null)
+            {
+                return "⛔ couldn't fetch the OpenRouter catalog — try again shortly.";
+            }
+
+            var search = tokens.Length > 1 ? string.Join(' ', tokens[1..]) : null;
+            var hits = catalog
+                .Where(m => search is null || m.Id.Contains(search, StringComparison.OrdinalIgnoreCase))
+                .Take(25)
+                .ToList();
+            if (hits.Count == 0)
+            {
+                return $"nothing in the catalog matches “{search}” ({catalog.Count} models total)";
+            }
+
+            var list = new StringBuilder("<b>🌐 OpenRouter catalog</b> <i>($ per MTok in/out · live, cached 1h)</i>\n");
+            foreach (var m in hits)
+            {
+                list.Append("<code>").Append(m.Id).Append("</code> $")
+                    .Append(m.InPerMTok.ToString("0.##", CultureInfo.InvariantCulture)).Append('/')
+                    .Append(m.OutPerMTok.ToString("0.##", CultureInfo.InvariantCulture));
+                if (m.ContextLength is { } ctx)
+                {
+                    list.Append(" · ").Append(ctx / 1000).Append("k ctx");
+                }
+
+                list.Append('\n');
+            }
+
+            list.Append("\n<i>/models set &lt;stage&gt; &lt;id&gt; — prices autofill from this catalog</i>");
+            return list.ToString();
+        }
+
+        if (tokens.Length >= 3 && tokens[0].Equals("effort", StringComparison.OrdinalIgnoreCase))
+        {
+            var stage = tokens[1].ToLowerInvariant();
+            var level = tokens[2].ToLowerInvariant();
+            if (!ModelStages.Any(s => s.Stage == stage))
+            {
+                return $"Unknown stage '{stage}'. Stages: {string.Join(", ", ModelStages.Select(s => s.Stage))}";
+            }
+
+            if (level is not ("minimal" or "low" or "medium" or "high"))
+            {
+                return "Effort levels: minimal · low · medium · high (or /models effort <stage> default)";
+            }
+
+            await registry.SetEffortAsync(stage, level, cancellationToken);
+            return $"🧠 <b>{stage}</b> reasoning effort → <b>{level}</b> — live from the next run.";
+        }
+
         if (tokens.Length >= 3 && tokens[0].Equals("set", StringComparison.OrdinalIgnoreCase))
         {
             var stage = tokens[1].ToLowerInvariant();
@@ -2437,7 +2824,20 @@ internal sealed class TelegramCommandService(
             decimal? outPrice = tokens.Length > 4 && decimal.TryParse(tokens[4], NumberStyles.Any, CultureInfo.InvariantCulture, out var op) ? op : null;
             if (inPrice is null && !IdeaEngine.Infrastructure.Ai.ModelRegistry.KnownPrices.ContainsKey(model))
             {
-                return $"I don't know {model}'s prices — add them: /models set {stage} {model} <$in/MTok> <$out/MTok>";
+                // Autofill from the live catalog - the owner should never need the docs.
+                var liveCatalog = await scope.ServiceProvider
+                    .GetRequiredService<IdeaEngine.Infrastructure.Ai.OpenRouterChatClient>()
+                    .ListModelsAsync(cancellationToken);
+                var live = liveCatalog?.FirstOrDefault(m => m.Id.Equals(model, StringComparison.OrdinalIgnoreCase));
+                if (live is not null)
+                {
+                    (inPrice, outPrice) = (live.InPerMTok, live.OutPerMTok);
+                }
+                else
+                {
+                    return $"{model} isn't in the live catalog — check /models available {model.Split('/')[^1]} " +
+                        $"or pass prices: /models set {stage} {model} <$in/MTok> <$out/MTok>";
+                }
             }
 
             // Live validation: a 1-token ping proves the id exists before money depends on it.
@@ -2462,11 +2862,13 @@ internal sealed class TelegramCommandService(
                 .Append(resolved.Model).Append("</code> $").Append(resolved.InPerMTok)
                 .Append('/').Append(resolved.OutPerMTok)
                 .Append(resolved.Overridden ? " ⚙️" : string.Empty)
+                .Append(resolved.Effort is { Length: > 0 } ? $" · 🧠{resolved.Effort}" : string.Empty)
                 .Append("\n<i>").Append(why).Append("</i>\n");
         }
 
-        builder.Append("\n/models set &lt;stage&gt; &lt;openrouter-id&gt; [$in] [$out] · /models reset &lt;stage&gt;")
-            .Append("\n<i>new model drops? paste its id — a live ping validates it before saving</i>");
+        builder.Append("\n/models set &lt;stage&gt; &lt;id&gt; [$in] [$out] · /models effort &lt;stage&gt; &lt;level&gt; · /models reset &lt;stage&gt;")
+            .Append("\n/models available [search] — the live OpenRouter catalog with prices")
+            .Append("\n<i>prices autofill from the catalog; a live ping validates before saving</i>");
         return builder.ToString();
     }
 
@@ -2555,6 +2957,39 @@ internal sealed class TelegramCommandService(
         AppendLine(builder, "Target", idea.TargetUser);
         AppendLine(builder, "Monetization", idea.Monetization);
         AppendLine(builder, "Distribution", idea.DistributionNote);
+
+        // ---- Lineage: where this idea came from (glass pipeline). ----
+        builder.Append("\n<b>🧬 Born from</b>\n");
+        if (idea.Origin == "operator")
+        {
+            builder.Append("🧑 your pitch — ").Append(IdeaEngine.Core.Common.Ui.Cmd("origin", idea.Id))
+                .Append(" shows it verbatim\n");
+        }
+        else if (idea.Origin == "dig")
+        {
+            builder.Append("⛏ /dig excavation").Append(idea.Playbook is { Length: > 0 } ? $" · 📚 {idea.Playbook}" : string.Empty).Append('\n');
+        }
+        else
+        {
+            builder.Append("🤖 ideation session").Append(idea.Playbook is { Length: > 0 } ? $" · 📚 {idea.Playbook}" : string.Empty).Append('\n');
+        }
+
+        var lineageIds = IdeaJson.ParseEvidence(idea.EvidenceJson);
+        if (lineageIds.Count > 0)
+        {
+            var evidenceSignals = await db.Signals
+                .Where(s => lineageIds.Contains(s.Id))
+                .Select(s => new { s.Id, s.Glance, s.Summary })
+                .Take(5)
+                .ToListAsync(cancellationToken);
+            foreach (var ev in evidenceSignals)
+            {
+                builder.Append("⛓ ").Append(IdeaEngine.Core.Common.Ui.Cmd("signal", ev.Id)).Append(' ')
+                    .Append(System.Net.WebUtility.HtmlEncode(IdeaEngine.Core.Common.TextClip.Clip(
+                        ev.Glance is { Length: > 0 } ? ev.Glance : ev.Summary, 70)))
+                    .Append('\n');
+            }
+        }
 
         var cardNotes = IdeaJson.SafeDeserialize<List<Dictionary<string, string>>>(idea.NotesJson);
         if (cardNotes is { Count: > 0 })
@@ -2750,20 +3185,87 @@ internal sealed class TelegramCommandService(
 
 
 
-    private string BuildConfig()
+    private async Task<string> HandleConfigAsync(string? argument, CancellationToken cancellationToken)
     {
-        var config = ingestionOptions.Value;
-        return
-            $"""
-            <b>Config</b>
-            Interval: every {config.IntervalHours:F1}h
-            Max items/source: {config.MaxItemsPerSource}
-            Run on startup: {config.RunOnStartup}
-            Notify every cycle: {config.NotifyEveryCycle}
-            Verbose item logging: {config.VerboseItemLogging}
-            Sources: HackerNews, FourChan, Bluesky, Lemmy, RedditRss
-            (tuning lives in appsettings.json → IdeaEngine:Sources)
-            """;
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
+        var autopilot = scope.ServiceProvider
+            .GetRequiredService<Microsoft.Extensions.Options.IOptions<IdeaEngine.Infrastructure.Autopilot.AutopilotOptions>>().Value;
+        var tokens = (argument ?? string.Empty).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+        if (tokens.Length >= 2 && tokens[0].Equals("reset", StringComparison.OrdinalIgnoreCase))
+        {
+            var spec = IdeaEngine.Infrastructure.Autopilot.SettingsCatalog.Find(tokens[1]);
+            if (spec is null)
+            {
+                return $"Unknown setting '{tokens[1]}' — /config lists them.";
+            }
+
+            var row = await db.AppState.FindAsync(["setting." + spec.Key], cancellationToken);
+            if (row is null)
+            {
+                return $"{spec.Key} had no override (already at default {spec.DefaultValue(autopilot)}).";
+            }
+
+            db.AppState.Remove(row);
+            await db.SaveChangesAsync(cancellationToken);
+            return $"↩️ {spec.Key} back to default <b>{spec.DefaultValue(autopilot)}</b>.";
+        }
+
+        if (tokens.Length >= 3 && tokens[0].Equals("set", StringComparison.OrdinalIgnoreCase))
+        {
+            var spec = IdeaEngine.Infrastructure.Autopilot.SettingsCatalog.Find(tokens[1]);
+            if (spec is null)
+            {
+                return $"Unknown setting '{tokens[1]}' — /config lists them.";
+            }
+
+            var value = tokens[2];
+            if (IdeaEngine.Infrastructure.Autopilot.SettingsCatalog.Validate(spec, value) is { } problem)
+            {
+                return $"⛔ {spec.Key}: {problem} (allowed: {spec.Allowed})";
+            }
+
+            var key = "setting." + spec.Key;
+            var row = await db.AppState.FindAsync([key], cancellationToken);
+            if (row is null)
+            {
+                db.AppState.Add(new IdeaEngine.Infrastructure.Persistence.Entities.AppStateEntity
+                {
+                    Key = key,
+                    Value = value,
+                    UpdatedAt = timeProvider.GetUtcNow(),
+                });
+            }
+            else
+            {
+                row.Value = value;
+                row.UpdatedAt = timeProvider.GetUtcNow();
+            }
+
+            await db.SaveChangesAsync(cancellationToken);
+            return $"✅ <b>{spec.Key}</b> = {value} — live from the next autopilot pass, no restart.";
+        }
+
+        var builder = new StringBuilder("<b>⚙️ Settings</b> <i>(runtime-adjustable; ⚙️ = your override)</i>\n\n");
+        foreach (var spec in IdeaEngine.Infrastructure.Autopilot.SettingsCatalog.All)
+        {
+            var row = await db.AppState.FindAsync(["setting." + spec.Key], cancellationToken);
+            var current = row?.Value ?? spec.DefaultValue(autopilot);
+            builder.Append("<b>").Append(spec.Key).Append("</b> = ").Append(current)
+                .Append(row is not null ? " ⚙️" : string.Empty)
+                .Append(" <i>(default ").Append(spec.DefaultValue(autopilot))
+                .Append(" · allowed ").Append(spec.Allowed).Append(")</i>\n")
+                .Append("<i>").Append(spec.Description).Append("</i>\n");
+        }
+
+        var ingestion = ingestionOptions.Value;
+        builder.Append("\n<b>Ingestion</b> <i>(appsettings-only)</i>: every ")
+            .Append(ingestion.IntervalHours.ToString("F1", CultureInfo.InvariantCulture))
+            .Append("h · max ").Append(ingestion.MaxItemsPerSource).Append("/source\n")
+            .Append("\n/config set &lt;key&gt; &lt;value&gt; · /config reset &lt;key&gt; · models live in /models")
+            .Append("\n<i>the right hand can change these too — always behind your ✅</i>");
+        return builder.ToString();
     }
 
     private static string BuildHelp() =>
@@ -2773,7 +3275,8 @@ internal sealed class TelegramCommandService(
         <b>Run</b>
         /collect — fetch all sources now (or: <code>/collect hn</code>, 4chan, bluesky, lemmy, reddit)
         /analyze — AI triage of queued items
-        /ideate 3 — AI sessions, rotating playbook lenses · /ideate 3 nostalgia — force one
+        /ideate 3 — AI sessions, rotating lenses · /ideate 3 nostalgia — force one
+        /ideate from 12 45 — build ONE idea from exactly those signals (/signals to pick)
         /playbooks — the lens list (psych, absurd, nostalgia, copycat…)
         /drop your pitch here — YOUR idea: shaped → skeptic → web research
         /research 20 21 24 — web-validate one or several ideas
@@ -2801,7 +3304,10 @@ internal sealed class TelegramCommandService(
         /best 8 — top signals, glance lines, idea links
         /ideas — browse with buttons (filters + pages) · /ideas top = best first
         /idea 5 — full trace card for idea number 5
-        /signals · /top · /status · /costs · /config
+        /signals — browse ALL signals: filters, 💎value/🕐 sort, 📅 day grouping, s-id taps
+        /signal 123 — lineage card: where it came from, which ideas consumed it
+        /config — runtime settings with allowed values · /config set sessions_per_day 4
+        /top · /status · /costs
 
         <b>Scores</b>
         ⭐ N% = opportunity strength (100% ≈ unicorn) · evidence N% = research solidity
@@ -2814,14 +3320,28 @@ internal sealed class TelegramCommandService(
 
     private async Task ReplyAsync(string html, CancellationToken cancellationToken)
     {
+        // Long outputs (origin cards, big lists) split into reply-chained messages -
+        // nothing may ever die of MESSAGE_TOO_LONG (the /origin 69 lesson).
+        int? previousId = null;
+        foreach (var chunk in IdeaEngine.Core.Common.MessageChunker.Split(html))
+        {
+            previousId = await SendReplyChunkAsync(chunk, previousId, cancellationToken) ?? previousId;
+        }
+    }
+
+    private async Task<int?> SendReplyChunkAsync(string html, int? replyTo, CancellationToken cancellationToken)
+    {
+        var replyParameters = replyTo is { } id ? new Telegram.Bot.Types.ReplyParameters { MessageId = id } : null;
         try
         {
-            await _bot!.SendMessage(
+            var sent = await _bot!.SendMessage(
                 chatId: _adminChatId,
                 text: html,
                 parseMode: ParseMode.Html,
+                replyParameters: replyParameters,
                 linkPreviewOptions: Telegram.Bot.Types.LinkPreviewOptions.Disabled,
                 cancellationToken: cancellationToken);
+            return sent.MessageId;
         }
         catch (Telegram.Bot.Exceptions.ApiRequestException ex)
         {
@@ -2829,11 +3349,13 @@ internal sealed class TelegramCommandService(
             logger.LogWarning(ex, "HTML reply rejected; resending as plain text");
             var plain = System.Net.WebUtility.HtmlDecode(
                 System.Text.RegularExpressions.Regex.Replace(html, "<[^>]+>", string.Empty));
-            await _bot!.SendMessage(
+            var sent = await _bot!.SendMessage(
                 chatId: _adminChatId,
                 text: plain,
+                replyParameters: replyParameters,
                 linkPreviewOptions: Telegram.Bot.Types.LinkPreviewOptions.Disabled,
                 cancellationToken: cancellationToken);
+            return sent.MessageId;
         }
     }
 

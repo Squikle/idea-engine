@@ -32,12 +32,15 @@ public sealed class HandOptions
     /// <summary>Read-intent round-trips per message; keeps one question from looping cost.</summary>
     public int MaxToolHops { get; set; } = 4;
 
+    public string ReasoningEffort { get; set; } = "medium";
+
     public HandOptions WithModel(ResolvedModel resolved)
     {
         var clone = (HandOptions)MemberwiseClone();
         clone.Model = resolved.Model;
         clone.InputPricePerMTok = resolved.InPerMTok;
         clone.OutputPricePerMTok = resolved.OutPerMTok;
+        clone.ReasoningEffort = resolved.Effort ?? clone.ReasoningEffort;
         return clone;
     }
 }
@@ -99,7 +102,7 @@ public sealed class HandService(
         - {"action":"run_appeal","id":57}
         - {"action":"run_partner","id":69}
         - {"action":"set_model","stage":"research","model":"vendor/id"}
-        - {"action":"set_setting","key":"sessions_per_day|auto_research_top|min_rating_for_research","value":"5"}
+        - {"action":"set_setting","key":"sessions_per_day|auto_research_top|min_rating_for_research|ideation_time|mine_time|digest_time","value":"5 or HH:mm"}
         RULES:
         - Look before you talk: when asked about specific ideas, READ them first (up to 4 hops).
         - Scores are EARNED through judgment - there is no score-edit action by design; when a
@@ -142,7 +145,7 @@ public sealed class HandService(
         {
             var completion = await chat.CompleteAsync(
                 options.Model, SystemPrompt, transcript,
-                options.MaxCompletionTokens, "medium", cancellationToken);
+                options.MaxCompletionTokens, options.ReasoningEffort, cancellationToken);
             cost += RecordLedger(completion, options);
 
             reply = LlmJson.TryParse<HandReplyDto>(completion?.Content);
