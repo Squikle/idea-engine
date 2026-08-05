@@ -443,9 +443,20 @@ internal sealed class TelegramCommandService(
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IdeaEngineDbContext>();
 
-        var rows = await db.Signals
-            .OrderByDescending(s => s.Id)
-            .Take(600)
+        var consumers = BuildSignalConsumerMap((await db.Ideas
+                .OrderByDescending(i => i.Id)
+                .Take(400)
+                .Select(i => new { i.Id, i.Status, i.EvidenceJson })
+                .ToListAsync(cancellationToken))
+            .Select(i => (i.Id, i.Status, i.EvidenceJson)));
+
+        // "used" looks up cited ids DIRECTLY - they are mostly older than any
+        // recent-N window (0-of-600 was a real bug the owner caught).
+        var usedIds = consumers.Keys.ToList();
+        var signalsQuery = filter == "used"
+            ? db.Signals.Where(s => usedIds.Contains(s.Id))
+            : db.Signals.OrderByDescending(s => s.Id).Take(600);
+        var rows = await signalsQuery
             .Select(s => new
             {
                 s.Id,
@@ -459,13 +470,6 @@ internal sealed class TelegramCommandService(
                 Source = s.RawItem!.Source,
             })
             .ToListAsync(cancellationToken);
-
-        var consumers = BuildSignalConsumerMap((await db.Ideas
-                .OrderByDescending(i => i.Id)
-                .Take(400)
-                .Select(i => new { i.Id, i.Status, i.EvidenceJson })
-                .ToListAsync(cancellationToken))
-            .Select(i => (i.Id, i.Status, i.EvidenceJson)));
 
         var scored = rows
             .Select(s => new
@@ -491,9 +495,19 @@ internal sealed class TelegramCommandService(
             _ => scored.AsEnumerable(),
         };
 
-        var filtered = sort == "new"
-            ? selected.OrderByDescending(x => x.Id).ToList()
-            : selected.OrderByDescending(x => x.Value).ThenByDescending(x => x.Id).ToList();
+        // Grouping means REAL groups: days descending, chosen sort INSIDE each day.
+        // (Headers on unsorted rows produced today/yesterday/today - owner's catch.)
+        var filtered = (group, sort) switch
+        {
+            (true, "new") => selected
+                .OrderByDescending(x => TimeZoneInfo.ConvertTime(x.CreatedAt, timeZone).Date)
+                .ThenByDescending(x => x.Id).ToList(),
+            (true, _) => selected
+                .OrderByDescending(x => TimeZoneInfo.ConvertTime(x.CreatedAt, timeZone).Date)
+                .ThenByDescending(x => x.Value).ThenByDescending(x => x.Id).ToList(),
+            (false, "new") => selected.OrderByDescending(x => x.Id).ToList(),
+            _ => selected.OrderByDescending(x => x.Value).ThenByDescending(x => x.Id).ToList(),
+        };
 
         var pages = Math.Max(1, (filtered.Count + pageSize - 1) / pageSize);
         page = Math.Clamp(page, 1, pages);
@@ -501,7 +515,8 @@ internal sealed class TelegramCommandService(
 
         var builder = new StringBuilder();
         builder.Append("<b>🎯 Signals · ").Append(filter).Append("</b> — ").Append(filtered.Count)
-            .Append(" of last 600 · by ").Append(sort == "new" ? "newest" : "value").Append('\n');
+            .Append(filter == "used" ? " ever cited by ideas" : " of last 600")
+            .Append(" · by ").Append(sort == "new" ? "newest" : "value").Append('\n');
         builder.Append("<i>tap s-ids for lineage · /ideate from N M builds from chosen ones</i>\n\n");
 
         DateOnly? lastDay = null;
@@ -1504,9 +1519,17 @@ internal sealed class TelegramCommandService(
             _ => scored,
         };
 
-        var filtered = sort == "new"
-            ? selected.OrderByDescending(x => x.Idea.Id).ToList()
-            : selected.OrderByDescending(x => x.Score.Total).ThenByDescending(x => x.Idea.Id).ToList();
+        var filtered = (group, sort) switch
+        {
+            (true, "new") => selected
+                .OrderByDescending(x => TimeZoneInfo.ConvertTime(x.Idea.CreatedAt, timeZone).Date)
+                .ThenByDescending(x => x.Idea.Id).ToList(),
+            (true, _) => selected
+                .OrderByDescending(x => TimeZoneInfo.ConvertTime(x.Idea.CreatedAt, timeZone).Date)
+                .ThenByDescending(x => x.Score.Total).ThenByDescending(x => x.Idea.Id).ToList(),
+            (false, "new") => selected.OrderByDescending(x => x.Idea.Id).ToList(),
+            _ => selected.OrderByDescending(x => x.Score.Total).ThenByDescending(x => x.Idea.Id).ToList(),
+        };
 
         var pages = Math.Max(1, (filtered.Count + pageSize - 1) / pageSize);
         page = Math.Clamp(page, 1, pages);
@@ -3275,7 +3298,9 @@ internal sealed class TelegramCommandService(
         <b>Run</b>
         /collect — fetch all sources now (or: <code>/collect hn</code>, 4chan, bluesky, lemmy, reddit)
         /analyze — AI triage of queued items
-        /ideate 3 — AI sessions, rotating lenses · /ideate 3 nostalgia — force one
+        /ideate 3 — 3 idea ATTEMPTS (each: builder reads ~24 pool signals, fuses 2-4
+        into ONE idea through an auto-rotated lens, skeptic attacks). Undrawn signals
+        wait — nothing is silently killed. /ideate 3 nostalgia — force a lens
         /ideate from 12 45 — build ONE idea from exactly those signals (/signals to pick)
         /playbooks — the lens list (psych, absurd, nostalgia, copycat…)
         /drop your pitch here — YOUR idea: shaped → skeptic → web research

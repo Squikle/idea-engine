@@ -76,6 +76,62 @@ git add -A && git commit && git push
 - The AI-brain/code-executor split (right hand) is a LAW: models emit intents, only
   code touches the database, writes always show an audit card first.
 
+## Run, debug, test
+
+```bash
+docker compose up -d db                     # Postgres 17 + pgvector on localhost:5433
+set -a; source .env; set +a                 # env for migrations/CLI (worker loads .env itself)
+dotnet build && dotnet test                 # 154 tests, warnings are errors
+dotnet test --filter "FullyQualifiedName~LlmJson"   # one test class
+# start the worker: see the ship ritual above (DETACHED launch, then verify)
+tail -f logs/worker-console.log             # live log (Serilog console, local time)
+grep -E "✓ |ERR|WRN|started" logs/worker-console.log   # health at a glance
+docker compose exec -T db psql -U ideaengine -d ideaengine   # SQL console
+# useful tables: ideas, signals, raw_items, research_reports, research_artifacts,
+#                jobs, ai_ledger, pipeline_runs, app_state
+```
+
+Debugging flow issues: `pipeline_runs` has one row per stage execution (ingest:X,
+ideate:session with sampled/cited ids in notes); `ai_ledger` explains every dollar;
+failed LLM parses leave `synthesis_raw` artifacts. The bot itself is the best probe:
+/status, /queue, /costs, /config, /models, /signals, and the right hand can query
+anything conversationally.
+
+## Porting to another host (Raspberry Pi / VPS / Linux)
+
+The app is a single .NET worker + Postgres; nothing is macOS-specific.
+
+1. Install .NET 10 SDK (arm64 builds exist for Pi 4/5; 2GB RAM is enough, the heavy
+   lifting happens at OpenRouter) + docker compose, or a native Postgres 17 with the
+   pgvector extension.
+2. Copy the repo + `.env` (that file IS the identity: Telegram token, OpenRouter key,
+   Brave, YouTube, Bluesky, optional eBay/Etsy/Pinterest).
+3. `docker compose up -d db && set -a; source .env; set +a && dotnet ef database update
+   --project src/IdeaEngine.Infrastructure` (fresh host = all migrations apply cleanly).
+4. Timezone: autopilot schedules in America/Toronto via TimeZoneInfo — ensure tzdata
+   is installed (Linux: `apt install tzdata`); no code change needed.
+5. Run under systemd instead of nohup (survives reboots):
+
+```ini
+# /etc/systemd/system/idea-engine.service
+[Unit]
+Description=idea-engine worker
+After=network-online.target docker.service
+[Service]
+WorkingDirectory=/home/pi/idea-engine
+ExecStart=/usr/bin/dotnet run --project src/IdeaEngine.Worker
+Restart=on-failure
+RestartSec=10
+[Install]
+WantedBy=multi-user.target
+```
+
+6. Only one instance may run globally — two pollers on one Telegram token fight
+   (409 conflicts). Stop the old host before starting the new one.
+7. Budget/keys/announcements continue unchanged: state lives in Postgres + .env,
+   so a host move is: stop worker → pg_dump/restore (or move the docker volume) →
+   copy .env → migrate → start.
+
 ## Environment
 
 macOS, .NET 10, Postgres 17 + pgvector in docker (`docker compose up -d db`,

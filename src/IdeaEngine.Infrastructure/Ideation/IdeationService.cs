@@ -17,7 +17,8 @@ namespace IdeaEngine.Infrastructure.Ideation;
 
 public sealed record IdeationBatchResult(
     int Sessions, int Advanced, int Killed, int Errors, decimal CostUsd,
-    string? StoppedReason, IReadOnlyList<string> Lines);
+    string? StoppedReason, IReadOnlyList<string> Lines,
+    int PoolEligible = 0, int SampledPerSession = 0);
 
 public sealed record MetaAdviceResult(string Html, int ProposalsCount, decimal CostUsd, string? StoppedReason);
 
@@ -91,7 +92,8 @@ public sealed class IdeationService(
             if (progress is not null)
             {
                 await progress.UpdateAsync(
-                    $"Ideation {session}/{count} · {advanced} live · {killed} killed · builder thinking…",
+                    $"idea attempt {session}/{count} · builder reading {options.SignalsPerSession} signals "
+                    + $"from a pool of {pool.Count} · so far: {advanced} idea(s) 🟢, {killed} ☠️…",
                     cancellationToken);
             }
 
@@ -124,7 +126,8 @@ public sealed class IdeationService(
             advanced, killed, errors, totalCost);
 
         return new IdeationBatchResult(
-            advanced + killed + errors, advanced, killed, errors, totalCost, stoppedReason, lines);
+            advanced + killed + errors, advanced, killed, errors, totalCost, stoppedReason, lines,
+            pool.Count, options.SignalsPerSession);
     }
 
     /// <summary>/ideate from 12 45: one session grounded on EXACTLY those signals.</summary>
@@ -176,7 +179,8 @@ public sealed class IdeationService(
             outcome.Kind == SessionOutcomeKind.Error ? 1 : 0,
             outcome.Cost,
             null,
-            outcome.Line is { } line ? [line] : []);
+            outcome.Line is { } line ? [line] : [],
+            chosen.Count, chosen.Count);
     }
 
     /// <summary>
@@ -440,7 +444,7 @@ public sealed class IdeationService(
         if (progress is not null)
         {
             await progress.UpdateAsync(
-                $"Ideation {session}/{count} · skeptic attacking \"{Truncate(idea.Title, 45)}\"…",
+                $"idea attempt {session}/{count} · builder proposed \"{Truncate(idea.Title, 45)}\" — skeptic attacking…",
                 cancellationToken);
         }
 

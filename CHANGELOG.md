@@ -5,6 +5,22 @@ MINOR: new capability (source, stage, command) · PATCH: fixes/tuning.
 The version lives in `Directory.Build.props` and shows in the startup banner.
 Every release gets a short point-by-point entry here, newest first.
 
+## 0.33.1 — 2026-08-05
+
+### Fixed
+- **/ideate finally explains itself**: progress reads "idea attempt 1/3 · builder reading
+  24 signals from a pool of 98"; the results card states the whole mechanic — one attempt
+  = ONE idea fused from 2-4 of ~24 randomly-drawn pool signals through an auto-rotated
+  lens, and undrawn signals are NOT killed, they wait. Pool size and sample size shown
+  every run; /help rewritten to match.
+- **"used: 0 of 600" was a real bug**: the used filter searched only the newest-600
+  window while cited signals are mostly older. It now looks up cited ids directly
+  ("N ever cited by ideas").
+- **Day grouping made real groups**: rows sort by day first, chosen sort within each
+  day — no more today/yesterday/today interleaving (both /ideas and /signals).
+- AGENTS.md: run/debug/test commands and a Raspberry Pi / Linux porting guide
+  (systemd unit, tzdata, single-poller rule, state-move checklist).
+
 ## 0.33.0 — 2026-08-05
 
 ### Added — more eyes
